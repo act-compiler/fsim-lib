@@ -21,3 +21,7 @@
   - TAIDL-TO cpu 0.022
   - TAIDL-TO gpu 0.010
 - nki programming model: https://awsdocs-neuron.readthedocs-hosted.com/en/v2.22.0/general/nki/programming_model.html#nki-programming-model
+
+## NEFF
+
+- talked about NEFF, multi-instruction streams
