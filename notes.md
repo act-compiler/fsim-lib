@@ -25,3 +25,8 @@
 ## NEFF
 
 - talked about NEFF, multi-instruction streams
+- TAIDL doesn't handle this well
+
+## GeneSys
+
+- good target to explore multi-instruction streams
