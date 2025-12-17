@@ -30,3 +30,5 @@
 ## GeneSys
 
 - good target to explore multi-instruction streams
+- also has loop instructions
+- tricky to auto-generate w/ the same paradigm
