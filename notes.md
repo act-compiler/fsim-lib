@@ -32,3 +32,8 @@
 - good target to explore multi-instruction streams
 - also has loop instructions
 - tricky to auto-generate w/ the same paradigm
+
+## new TAIDL-TO library?
+
+- you pick your parser, we simulate most instructions
+- you do the rest -- program counter, jumps
