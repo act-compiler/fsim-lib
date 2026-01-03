@@ -37,3 +37,10 @@
 
 - you pick your parser, we simulate most instructions
 - you do the rest -- program counter, jumps
+
+## problems
+
+- compile time!!!
+- ok if you can annotate for loops
+  - TAIDL-TO kernels for AMX
+  - I-BERT, Exo kernels in Gemmini
