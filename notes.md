@@ -44,3 +44,7 @@
 - ok if you can annotate for loops
   - TAIDL-TO kernels for AMX
   - I-BERT, Exo kernels in Gemmini
+
+## what works
+
+- batching -- amortize compile, consume multiple inputs in parallel
