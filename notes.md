@@ -44,6 +44,8 @@
 - ok if you can annotate for loops
   - TAIDL-TO kernels for AMX
   - I-BERT, Exo kernels in Gemmini
+- still doesn't scale over a few 1000 instrs w/ loops
+- data-dependent / sync instructions -- likely an issue in NEFFs, need to dig deeper
 
 ## what works
 
