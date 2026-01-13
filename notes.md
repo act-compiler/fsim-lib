@@ -50,3 +50,8 @@
 ## what works
 
 - batching -- amortize compile, consume multiple inputs in parallel
+
+## ideas
+
+- loop detection? something like the SpiderMonkey thing from the UIUC compiler qual paper
+- fallback w/ a lazy trigger, break into multiple compile chunks
