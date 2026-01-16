@@ -58,3 +58,4 @@
 - works on AMX conceptually but need a bigger kernel
 - NEFF not public :(
 - GeneSys w/ large loops? or Exo kernels in Gemmini
+- parallelize compile on all CPU threads, GPU does the sim anyway
