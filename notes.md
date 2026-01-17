@@ -59,3 +59,5 @@
 - NEFF not public :(
 - GeneSys w/ large loops? or Exo kernels in Gemmini
 - parallelize compile on all CPU threads, GPU does the sim anyway
+- names: lazy simulation, early trigger, slot-based compilation (like OOO ROB)
+- probably need our own stablehlo passes
