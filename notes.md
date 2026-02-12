@@ -61,3 +61,7 @@
 - parallelize compile on all CPU threads, GPU does the sim anyway
 - names: lazy simulation, early trigger, slot-based compilation (like OOO ROB)
 - probably need our own stablehlo passes
+
+## pseudocode
+
+- board pics in pseudocode/
