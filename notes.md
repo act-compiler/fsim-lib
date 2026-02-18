@@ -65,3 +65,4 @@
 ## pseudocode
 
 - board pics in pseudocode/
+- shared w/ AWS
