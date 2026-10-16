@@ -14,6 +14,7 @@ Under review at a major systems conference.
   - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
   - `build.sh`: the build of a target
   - `clean.sh`: the removal of generated files, only files git ignores
+- `format/`: the formatter and its per-language configs.
 
 ## Running it
 
@@ -64,4 +65,16 @@ Without a flag it removes every ignored `__pycache__/` directory.
 
 ```bash
 ./scripts/clean.sh -n --build     # show what a build clean would remove
+```
+
+## Format
+
+`format/format.sh` formats the paths it is given, or the whole tree without one.
+
+- A whole-tree run refuses while unstaged changes are present, unless `FORMAT_SKIP_CLEAN_CHECK=1` is set.
+- A formatter not on the `PATH` is skipped with a note; the image has them all.
+
+```bash
+./docker/exec.sh "./format/format.sh <paths>"   # format these paths
+./docker/exec.sh "./format/format.sh"           # format the whole tree
 ```
