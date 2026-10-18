@@ -8,6 +8,8 @@ The common simulation library: a static C++ library that compiles StableHLO modu
 
 A consumer adds it with `add_subdirectory(fsim)` and links `fsim`.
 The plugin path is the cache variable `FSIM_PJRT_PLUGIN`, baked in at build time.
+The option `FSIM_OVERLAP`, on by default, compiles and executes modules on background threads; off, `submit` runs each module before it returns.
+`Pipeline`'s `threads` argument, 4 by default, is its compile worker count under `FSIM_OVERLAP`; 0 throws.
 
 ```bash
 ./scripts/setup.sh          # fetch the pinned plugin and header
