@@ -1,16 +1,20 @@
 // The pipeline's threads: a pool of compile workers fills modules in any
 // order, and one executor runs them strictly in submission order. All shared
-// state sits behind one mutex and one condition variable. Without
-// FSIM_OVERLAP there are no threads: submit() compiles and executes in place.
+// state sits behind one mutex and one condition variable. Outside the overlap
+// variant there are no threads: submit() compiles and executes in place.
 #include "fsim/pipeline.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#if FSIM_OVERLAP
+#include <string_view>
+#ifdef FSIM_VARIANT_OVERLAP
 #include <condition_variable>
 #include <deque>
 #include <thread>
@@ -24,7 +28,26 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-#if FSIM_OVERLAP
+// The knobs Knobs::parse kept.
+Knobs knobs;
+
+// Prints a refusal of the command line and exits 1.
+[[noreturn]] void refuse(std::string_view message) {
+  std::cerr << "fsim: " << message << "\n";
+  std::exit(1);
+}
+
+// Parses one knob's count; refuses anything but a whole number.
+template <typename T> T count(std::string_view knob, const char *text) {
+  T value{};
+  std::string_view digits = text ? text : "";
+  auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+  if (digits.empty() || error != std::errc() || end != digits.data() + digits.size())
+    refuse(std::string(knob) + " takes a count");
+  return value;
+}
+
+#ifdef FSIM_VARIANT_OVERLAP
 // One submitted module, from text to executable.
 struct Module {
   std::string text;
@@ -42,6 +65,12 @@ std::string signature(PJRT_Buffer_Type type, const int64_t *dims, size_t num_dim
   return text + "]";
 }
 
+#ifdef FSIM_COMPILER_CUSTOM
+// The library's StableHLO passes; none yet.
+void passes(std::string &) {
+}
+#endif
+
 } // namespace
 
 size_t Stats::total_bytes() const {
@@ -57,12 +86,13 @@ struct Pipeline::Impl {
   std::vector<PJRT_Buffer *> buffers;
   const std::string options = compile_options();
   const Clock::time_point zero = Clock::now();
+  const uint32_t trigger;
 
   // Guarded by mutex; changed signals every update.
   mutable std::mutex mutex;
   Stats stats;
   std::exception_ptr error;
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
   std::condition_variable changed;
   std::deque<Module> modules;
   size_t next_compile = 0;
@@ -73,27 +103,25 @@ struct Pipeline::Impl {
   std::thread executor;
 #endif
 
-  Impl(const Runtime::Impl &rt, std::vector<Tensor> state, unsigned threads);
+  Impl(const Runtime::Impl &rt, std::vector<Tensor> state);
   ~Impl();
 
   double now() const {
     return std::chrono::duration<double, std::milli>(Clock::now() - zero).count();
   }
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
   void compile_loop();
   void execute_loop();
 #else
-  void run(const std::string &text, ModuleStats &stats);
+  void run(std::string text, ModuleStats &stats);
 #endif
-  PJRT_LoadedExecutable *compile(const std::string &text) const;
+  PJRT_LoadedExecutable *compile(std::string text) const;
   void check_outputs(PJRT_LoadedExecutable *loaded) const;
   void execute(PJRT_LoadedExecutable *executable);
 };
 
-Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, unsigned threads)
-    : rt(rt), state(std::move(state)) {
-  if (threads == 0)
-    throw std::invalid_argument("fsim: a pipeline needs at least one compile thread");
+Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state)
+    : rt(rt), state(std::move(state)), trigger(knobs.trigger.value_or(10000)) {
   try {
     // One device buffer per state tensor.
     buffers.reserve(this->state.size());
@@ -111,14 +139,14 @@ Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, unsigne
       buffers.push_back(args.buffer);
       rt.await(args.done_with_host_buffer);
     }
-#if FSIM_OVERLAP
-    for (unsigned i = 0; i < threads; ++i)
+#ifdef FSIM_VARIANT_OVERLAP
+    for (unsigned i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
       workers.emplace_back(&Impl::compile_loop, this);
     executor = std::thread(&Impl::execute_loop, this);
 #endif
   } catch (...) {
     // Undo a partial construction: stop, join, free.
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
     {
       std::lock_guard lock(mutex);
       stop = true;
@@ -134,7 +162,7 @@ Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, unsigne
 }
 
 Pipeline::Impl::~Impl() {
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
   {
     std::lock_guard lock(mutex);
     stop = true;
@@ -151,7 +179,7 @@ Pipeline::Impl::~Impl() {
     rt.destroy(buffer);
 }
 
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
 
 void Pipeline::Impl::compile_loop() {
   std::unique_lock lock(mutex);
@@ -170,7 +198,7 @@ void Pipeline::Impl::compile_loop() {
     std::exception_ptr failure;
     if (!skip) {
       try {
-        executable = compile(text);
+        executable = compile(std::move(text));
       } catch (...) {
         failure = std::current_exception();
       }
@@ -227,9 +255,9 @@ void Pipeline::Impl::execute_loop() {
 }
 #else
 // Compiles and executes one module in place.
-void Pipeline::Impl::run(const std::string &text, ModuleStats &stats) {
+void Pipeline::Impl::run(std::string text, ModuleStats &stats) {
   stats.compile_begin_ms = now();
-  PJRT_LoadedExecutable *executable = compile(text);
+  PJRT_LoadedExecutable *executable = compile(std::move(text));
   stats.compile_end_ms = now();
   stats.execute_begin_ms = stats.compile_end_ms;
   try {
@@ -243,7 +271,10 @@ void Pipeline::Impl::run(const std::string &text, ModuleStats &stats) {
 }
 #endif
 
-PJRT_LoadedExecutable *Pipeline::Impl::compile(const std::string &text) const {
+PJRT_LoadedExecutable *Pipeline::Impl::compile(std::string text) const {
+#ifdef FSIM_COMPILER_CUSTOM
+  passes(text);
+#endif
   PJRT_Program program{};
   program.struct_size = PJRT_Program_STRUCT_SIZE;
   program.code = const_cast<char *>(text.data());
@@ -339,26 +370,73 @@ void Pipeline::Impl::execute(PJRT_LoadedExecutable *executable) {
   buffers = std::move(results);
 }
 
-Pipeline::Pipeline(Runtime &runtime, std::vector<Tensor> state, unsigned threads)
-    : impl_(std::make_unique<Impl>(*runtime.impl_, std::move(state), threads)) {
+int Knobs::parse(int argc, char **argv) {
+  // Compacts argv over every other argument.
+  int kept = 1;
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg == "--trigger")
+      knobs.trigger = count<uint32_t>(arg, argv[++i]);
+    else if (arg == "--overlap")
+      knobs.threads = count<unsigned>(arg, argv[++i]);
+    else
+      argv[kept++] = argv[i];
+  }
+  argv[kept] = nullptr;
+
+  // Refuses a knob this build lacks.
+#if defined(FSIM_VARIANT_EAGER) || defined(FSIM_VARIANT_TAIDL)
+  if (knobs.trigger)
+    refuse("this build has no soft trigger");
+#endif
+#ifndef FSIM_VARIANT_OVERLAP
+  if (knobs.threads)
+    refuse("this build compiles on no threads");
+#endif
+  if (knobs.threads == 0u)
+    refuse("--overlap needs at least one compile thread");
+  return kept;
+}
+
+Pipeline::Pipeline(Runtime &runtime, std::vector<Tensor> state)
+    : impl_(std::make_unique<Impl>(*runtime.impl_, std::move(state))) {
 }
 
 Pipeline::~Pipeline() = default;
+
+bool Pipeline::soft_trigger([[maybe_unused]] size_t ops) const {
+#if defined(FSIM_VARIANT_EAGER)
+  // Any op past the state's prologue flushes.
+  return ops > impl_->state.size();
+#elif defined(FSIM_VARIANT_TAIDL)
+  return false;
+#else
+  return ops >= impl_->trigger;
+#endif
+}
 
 void Pipeline::submit(std::string module) {
   std::lock_guard lock(impl_->mutex);
   if (impl_->error)
     std::rethrow_exception(impl_->error);
+#ifdef FSIM_VARIANT_TAIDL
+  // One module per run; a second is the pipeline's error.
+  if (!impl_->stats.modules.empty()) {
+    impl_->error = std::make_exception_ptr(std::runtime_error(
+        "fsim: a second module; this build runs one module at the end of the run"));
+    std::rethrow_exception(impl_->error);
+  }
+#endif
   ModuleStats stats;
   stats.bytes = module.size();
   impl_->stats.modules.push_back(stats);
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
   impl_->modules.emplace_back().text = std::move(module);
   impl_->changed.notify_all();
 #else
   // A failure stays the pipeline's error.
   try {
-    impl_->run(module, impl_->stats.modules.back());
+    impl_->run(std::move(module), impl_->stats.modules.back());
   } catch (...) {
     impl_->error = std::current_exception();
     throw;
@@ -369,7 +447,7 @@ void Pipeline::submit(std::string module) {
 void Pipeline::sync() {
   {
     std::unique_lock lock(impl_->mutex);
-#if FSIM_OVERLAP
+#ifdef FSIM_VARIANT_OVERLAP
     impl_->changed.wait(
         lock, [&] { return impl_->error || impl_->next_execute == impl_->modules.size(); });
 #endif

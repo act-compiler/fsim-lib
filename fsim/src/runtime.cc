@@ -1,5 +1,6 @@
 #include <dlfcn.h>
 
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -18,13 +19,18 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
     throw std::runtime_error(std::string("fsim: dlsym GetPjrtApi: ") + dlerror());
   const PJRT_Api *api = get_api();
 
-  // Header and plugin must agree on the api version.
+  // Header and plugin must agree on the major version.
   int major = api->pjrt_api_version.major_version;
   int minor = api->pjrt_api_version.minor_version;
-  if (major != PJRT_API_MAJOR || minor != PJRT_API_MINOR)
-    throw std::runtime_error("fsim: plugin api " + std::to_string(major) + "." +
-                             std::to_string(minor) + ", header " + std::to_string(PJRT_API_MAJOR) +
-                             "." + std::to_string(PJRT_API_MINOR));
+  std::string versions = "fsim: plugin api " + std::to_string(major) + "." + std::to_string(minor) +
+                         ", header " + std::to_string(PJRT_API_MAJOR) + "." +
+                         std::to_string(PJRT_API_MINOR);
+  if (major != PJRT_API_MAJOR)
+    throw std::runtime_error(versions);
+  // An older plugin must reach the last PJRT_Api field called.
+  if (api->struct_size < offsetof(PJRT_Api, PJRT_Executable_OutputDimensions) +
+                             sizeof(api->PJRT_Executable_OutputDimensions))
+    throw std::runtime_error(versions + ": plugin lacks PJRT_Executable_OutputDimensions");
   impl_->api = api;
 
   PJRT_Plugin_Initialize_Args init{};
