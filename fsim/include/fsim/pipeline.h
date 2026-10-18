@@ -2,7 +2,8 @@
 // Each module's @main takes every state tensor in order and returns them all
 // in order. submit() queues a module and returns; modules compile in parallel
 // and execute strictly in submission order. sync() waits, then copies the
-// state back to host memory. One caller thread drives a pipeline.
+// state back to host memory. One caller thread drives a pipeline. Built with
+// FSIM_OVERLAP off, submit() compiles and executes before it returns.
 #pragma once
 
 #include <cstddef>
@@ -44,7 +45,8 @@ struct Stats {
 class Pipeline {
 public:
   // Uploads the state; runtime and host memory must outlive the pipeline.
-  Pipeline(Runtime &runtime, std::vector<Tensor> state);
+  // threads compile workers run under FSIM_OVERLAP; 0 throws.
+  Pipeline(Runtime &runtime, std::vector<Tensor> state, unsigned threads = 4);
   // Stops the threads; modules not yet run are dropped.
   ~Pipeline();
   Pipeline(const Pipeline &) = delete;
