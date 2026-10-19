@@ -7,7 +7,10 @@ The common simulation library: a static C++ library that compiles StableHLO modu
   - `tensor.h`
   - `pipeline.h`
 - `src/`: the implementation; no PJRT type leaves it.
-- `third_party/`: per PJRT entry, `pjrt/<entry>/` holds the PJRT C API header and the plugin `setup.sh` sets up, and `dist/` the CPU plugin tarballs and GPU wheels.
+- `third_party/`: what `setup.sh` sets up:
+  - `pjrt/<entry>/`: per PJRT entry, the PJRT C API header and the plugin
+  - `mlir/`: the MLIR and StableHLO headers in `include/` and static libraries in `lib/`, at StableHLO's pins
+  - `dist/`: the CPU plugin and toolchain tarballs, and the GPU wheels
 
 A consumer adds it with `add_subdirectory(fsim)` and links `fsim`.
 Two cache variables fix the build:
@@ -54,12 +57,18 @@ Outside `overlap`, `submit` runs each module before it returns.
 A knob the build lacks, or 0 threads, prints the refusal and exits 1.
 `Pipeline::soft_trigger(ops)` tells a driver whether a graph of `ops` ops, the prologue counted, flushes now.
 
-`setup.sh` takes `--pjrt NAME`, one of the four entries above, default `jax-0.11.2-cpu`.
+`setup.sh` takes two flags, and without either sets up the default entry and the toolchain:
+
+| flag          | what it sets up                                                   |
+| ------------- | ----------------------------------------------------------------- |
+| `--pjrt NAME` | one of the four entries above, default `jax-0.11.2-cpu`           |
+| `--mlir`      | the MLIR toolchain at StableHLO `v1.20.0` and that tag's LLVM pin |
 
 - A `-cpu` entry unpacks its plugin from its `dist/` tarball, and builds it for 1-2 h when the tarball is absent.
 - A `-cuda12` entry fetches its plugin and CUDA as PyPI wheels pinned by sha256 into `dist/`, then unpacks them.
+- The toolchain unpacks from its `dist/` tarball, and builds from source for about 10 min when the tarball is absent.
 
 ```bash
-./scripts/setup.sh          # set up the --pjrt entry
+./scripts/setup.sh          # set up the default entry and the toolchain
 ./scripts/build.sh fsim     # build into fsim/build/
 ```
