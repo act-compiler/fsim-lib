@@ -3,7 +3,9 @@
 #include "pjrt.h"
 
 namespace fsim {
+namespace {
 
+// Bytes of one element.
 size_t element_size(ElementType type) {
   switch (type) {
   case ElementType::ui8:
@@ -27,6 +29,8 @@ size_t element_size(ElementType type) {
   }
   __builtin_unreachable();
 }
+
+} // namespace
 
 size_t byte_size(const Tensor &tensor) {
   size_t bytes = element_size(tensor.type);

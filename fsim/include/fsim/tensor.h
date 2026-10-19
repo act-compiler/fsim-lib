@@ -32,9 +32,6 @@ struct Tensor {
   void *data;
 };
 
-// Bytes of one element.
-size_t element_size(ElementType type);
-
 // Bytes of the whole tensor.
 size_t byte_size(const Tensor &tensor);
 

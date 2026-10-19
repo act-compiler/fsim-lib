@@ -1,7 +1,7 @@
-// The pipeline's threads: a pool of compile workers fills modules in any
-// order, and one executor runs them strictly in submission order. All shared
-// state sits behind one mutex and one condition variable. Outside the overlap
-// variant there are no threads: submit() compiles and executes in place.
+// The pipeline's threads: compile workers fill modules in any order.
+// One executor runs them strictly in submission order.
+// All shared state sits behind one mutex and one condition variable.
+// Outside the overlap variant there are no threads.
 #include "fsim/pipeline.h"
 
 #include <algorithm>
@@ -38,8 +38,8 @@ Knobs knobs;
 }
 
 // Parses one knob's count; refuses anything but a whole number.
-template <typename T> T count(std::string_view knob, const char *text) {
-  T value{};
+uint32_t count(std::string_view knob, const char *text) {
+  uint32_t value = 0;
   std::string_view digits = text ? text : "";
   auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
   if (digits.empty() || error != std::errc() || end != digits.data() + digits.size())
@@ -73,26 +73,19 @@ void passes(std::string &) {
 
 } // namespace
 
-size_t Stats::total_bytes() const {
-  size_t bytes = 0;
-  for (const ModuleStats &module : modules)
-    bytes += module.bytes;
-  return bytes;
-}
-
 struct Pipeline::Impl {
   const Runtime::Impl &rt;
   std::vector<Tensor> state;
   std::vector<PJRT_Buffer *> buffers;
   const std::string options = compile_options();
-  const Clock::time_point zero = Clock::now();
   const uint32_t trigger;
 
-  // Guarded by mutex; changed signals every update.
+  // Guarded by mutex.
   mutable std::mutex mutex;
   Stats stats;
   std::exception_ptr error;
 #ifdef FSIM_VARIANT_OVERLAP
+  // Signals every update.
   std::condition_variable changed;
   std::deque<Module> modules;
   size_t next_compile = 0;
@@ -106,8 +99,12 @@ struct Pipeline::Impl {
   Impl(const Runtime::Impl &rt, std::vector<Tensor> state);
   ~Impl();
 
-  double now() const {
-    return std::chrono::duration<double, std::milli>(Clock::now() - zero).count();
+  // Uploads the state and starts the threads; ~Impl undoes a throw.
+  void start();
+
+  // Ms elapsed since begin.
+  static double ms_since(Clock::time_point begin) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
   }
 #ifdef FSIM_VARIANT_OVERLAP
   void compile_loop();
@@ -122,43 +119,30 @@ struct Pipeline::Impl {
 
 Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state)
     : rt(rt), state(std::move(state)), trigger(knobs.trigger.value_or(10000)) {
-  try {
-    // One device buffer per state tensor.
-    buffers.reserve(this->state.size());
-    for (const Tensor &tensor : this->state) {
-      PJRT_Client_BufferFromHostBuffer_Args args{};
-      args.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;
-      args.client = rt.client;
-      args.data = tensor.data;
-      args.type = buffer_type(tensor.type);
-      args.dims = tensor.dims.data();
-      args.num_dims = tensor.dims.size();
-      args.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableOnlyDuringCall;
-      args.device = rt.device;
-      rt.check(rt.api->PJRT_Client_BufferFromHostBuffer(&args), "PJRT_Client_BufferFromHostBuffer");
-      buffers.push_back(args.buffer);
-      rt.await(args.done_with_host_buffer);
-    }
-#ifdef FSIM_VARIANT_OVERLAP
-    for (unsigned i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
-      workers.emplace_back(&Impl::compile_loop, this);
-    executor = std::thread(&Impl::execute_loop, this);
-#endif
-  } catch (...) {
-    // Undo a partial construction: stop, join, free.
-#ifdef FSIM_VARIANT_OVERLAP
-    {
-      std::lock_guard lock(mutex);
-      stop = true;
-    }
-    changed.notify_all();
-    for (std::thread &worker : workers)
-      worker.join();
-#endif
-    for (PJRT_Buffer *buffer : buffers)
-      rt.destroy(buffer);
-    throw;
+}
+
+void Pipeline::Impl::start() {
+  // One device buffer per state tensor.
+  buffers.reserve(state.size());
+  for (const Tensor &tensor : state) {
+    PJRT_Client_BufferFromHostBuffer_Args args{};
+    args.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;
+    args.client = rt.client;
+    args.data = tensor.data;
+    args.type = buffer_type(tensor.type);
+    args.dims = tensor.dims.data();
+    args.num_dims = tensor.dims.size();
+    args.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableOnlyDuringCall;
+    args.device = rt.device;
+    rt.check(rt.api->PJRT_Client_BufferFromHostBuffer(&args), "PJRT_Client_BufferFromHostBuffer");
+    buffers.push_back(args.buffer);
+    rt.await(args.done_with_host_buffer);
   }
+#ifdef FSIM_VARIANT_OVERLAP
+  for (uint32_t i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
+    workers.emplace_back(&Impl::compile_loop, this);
+  executor = std::thread(&Impl::execute_loop, this);
+#endif
 }
 
 Pipeline::Impl::~Impl() {
@@ -170,7 +154,8 @@ Pipeline::Impl::~Impl() {
   changed.notify_all();
   for (std::thread &worker : workers)
     worker.join();
-  executor.join();
+  if (executor.joinable())
+    executor.join();
   for (Module &module : modules)
     if (module.executable)
       rt.destroy(module.executable);
@@ -193,7 +178,7 @@ void Pipeline::Impl::compile_loop() {
     lock.unlock();
 
     // Compile outside the lock; a dead pipeline skips the work.
-    double begin = now();
+    Clock::time_point begin = Clock::now();
     PJRT_LoadedExecutable *executable = nullptr;
     std::exception_ptr failure;
     if (!skip) {
@@ -203,14 +188,13 @@ void Pipeline::Impl::compile_loop() {
         failure = std::current_exception();
       }
     }
-    double end = now();
+    double ms = ms_since(begin);
 
     lock.lock();
     modules[index].executable = executable;
     modules[index].error = failure;
     modules[index].compiled = true;
-    stats.modules[index].compile_begin_ms = begin;
-    stats.modules[index].compile_end_ms = end;
+    stats.modules[index].compile_ms = ms;
     changed.notify_all();
   }
 }
@@ -234,7 +218,7 @@ void Pipeline::Impl::execute_loop() {
     lock.unlock();
 
     // Execute outside the lock; only this thread touches the buffers.
-    double begin = now();
+    Clock::time_point begin = Clock::now();
     std::exception_ptr failure;
     try {
       execute(executable);
@@ -242,11 +226,10 @@ void Pipeline::Impl::execute_loop() {
       failure = std::current_exception();
     }
     rt.destroy(executable);
-    double end = now();
+    double ms = ms_since(begin);
 
     lock.lock();
-    stats.modules[next_execute].execute_begin_ms = begin;
-    stats.modules[next_execute].execute_end_ms = end;
+    stats.modules[next_execute].execute_ms = ms;
     ++next_execute;
     if (failure)
       error = failure;
@@ -256,10 +239,10 @@ void Pipeline::Impl::execute_loop() {
 #else
 // Compiles and executes one module in place.
 void Pipeline::Impl::run(std::string text, ModuleStats &stats) {
-  stats.compile_begin_ms = now();
+  Clock::time_point begin = Clock::now();
   PJRT_LoadedExecutable *executable = compile(std::move(text));
-  stats.compile_end_ms = now();
-  stats.execute_begin_ms = stats.compile_end_ms;
+  stats.compile_ms = ms_since(begin);
+  begin = Clock::now();
   try {
     execute(executable);
   } catch (...) {
@@ -267,10 +250,11 @@ void Pipeline::Impl::run(std::string text, ModuleStats &stats) {
     throw;
   }
   rt.destroy(executable);
-  stats.execute_end_ms = now();
+  stats.execute_ms = ms_since(begin);
 }
 #endif
 
+// Compiles the text, then checks its results against the state.
 PJRT_LoadedExecutable *Pipeline::Impl::compile(std::string text) const {
 #ifdef FSIM_COMPILER_CUSTOM
   passes(text);
@@ -376,9 +360,9 @@ int Knobs::parse(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     std::string_view arg = argv[i];
     if (arg == "--trigger")
-      knobs.trigger = count<uint32_t>(arg, argv[++i]);
+      knobs.trigger = count(arg, argv[++i]);
     else if (arg == "--overlap")
-      knobs.threads = count<unsigned>(arg, argv[++i]);
+      knobs.threads = count(arg, argv[++i]);
     else
       argv[kept++] = argv[i];
   }
@@ -400,6 +384,7 @@ int Knobs::parse(int argc, char **argv) {
 
 Pipeline::Pipeline(Runtime &runtime, std::vector<Tensor> state)
     : impl_(std::make_unique<Impl>(*runtime.impl_, std::move(state))) {
+  impl_->start();
 }
 
 Pipeline::~Pipeline() = default;
@@ -427,9 +412,7 @@ void Pipeline::submit(std::string module) {
     std::rethrow_exception(impl_->error);
   }
 #endif
-  ModuleStats stats;
-  stats.bytes = module.size();
-  impl_->stats.modules.push_back(stats);
+  impl_->stats.modules.emplace_back();
 #ifdef FSIM_VARIANT_OVERLAP
   impl_->modules.emplace_back().text = std::move(module);
   impl_->changed.notify_all();
