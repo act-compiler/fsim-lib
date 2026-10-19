@@ -37,7 +37,10 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   init.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
   impl_->check(api->PJRT_Plugin_Initialize(&init), "PJRT_Plugin_Initialize");
 
-  // One client over one cpu device.
+  // One client: the cpu plugin's over one device, the gpu plugin's on its defaults.
+  PJRT_Client_Create_Args create{};
+  create.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+#ifdef FSIM_DEVICE_CPU
   PJRT_NamedValue devices{};
   devices.struct_size = PJRT_NamedValue_STRUCT_SIZE;
   devices.name = "cpu_device_count";
@@ -45,10 +48,9 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   devices.type = PJRT_NamedValue_kInt64;
   devices.int64_value = 1;
   devices.value_size = 1;
-  PJRT_Client_Create_Args create{};
-  create.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   create.create_options = &devices;
   create.num_options = 1;
+#endif
   impl_->check(api->PJRT_Client_Create(&create), "PJRT_Client_Create");
   impl_->client = create.client;
 
