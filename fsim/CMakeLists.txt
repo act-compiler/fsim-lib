@@ -2,22 +2,31 @@
 cmake_minimum_required(VERSION 3.20)
 project(fsim LANGUAGES CXX)
 
-set(FSIM_PJRT jax-0.11.2 CACHE STRING "PJRT entry of fsim/setup.sh: header and plugin")
-set(FSIM_PJRT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pjrt/${FSIM_PJRT}")
-# The plugin's absolute path, baked into the library.
-set(FSIM_PJRT_PLUGIN "${FSIM_PJRT_DIR}/lib/pjrt_c_api_cpu_plugin.so")
-
 # The build's variant and compiler, each fixed at configure time.
 set(FSIM_VARIANT overlap CACHE STRING "Variant: eager, taidl, trigger or overlap")
 if(NOT FSIM_VARIANT MATCHES "^(eager|taidl|trigger|overlap)$")
   message(FATAL_ERROR "Unknown FSIM_VARIANT '${FSIM_VARIANT}': pass eager, taidl, trigger or overlap")
 endif()
-set(FSIM_COMPILER custom CACHE STRING "Compiler: xla or custom")
-if(NOT FSIM_COMPILER MATCHES "^(xla|custom)$")
-  message(FATAL_ERROR "Unknown FSIM_COMPILER '${FSIM_COMPILER}': pass xla or custom")
+set(FSIM_COMPILER custom-cpu CACHE STRING "Compiler: xla-0.11-cpu, xla-0.4-cpu or custom-cpu")
+# The compiler picks the PJRT entry of fsim/setup.sh.
+if(FSIM_COMPILER MATCHES "^(xla-0\\.11|custom)-cpu$")
+  set(FSIM_PJRT jax-0.11.2-cpu)
+elseif(FSIM_COMPILER STREQUAL "xla-0.4-cpu")
+  set(FSIM_PJRT jax-0.4.33-cpu)
+else()
+  message(FATAL_ERROR "Unknown FSIM_COMPILER '${FSIM_COMPILER}': pass xla-0.11-cpu, xla-0.4-cpu or custom-cpu")
+endif()
+set(FSIM_PJRT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pjrt/${FSIM_PJRT}")
+# The plugin's absolute path, baked into the library.
+set(FSIM_PJRT_PLUGIN "${FSIM_PJRT_DIR}/lib/pjrt_c_api_cpu_plugin.so")
+# A missing entry stops the configure.
+if(NOT EXISTS "${FSIM_PJRT_PLUGIN}")
+  message(FATAL_ERROR "No ${FSIM_PJRT_PLUGIN}: run ./scripts/setup.sh --pjrt ${FSIM_PJRT}")
 endif()
 string(TOUPPER "${FSIM_VARIANT}" FSIM_VARIANT_NAME)
-string(TOUPPER "${FSIM_COMPILER}" FSIM_COMPILER_NAME)
+# The compiler's kind, xla or custom, names its definition.
+string(REGEX MATCH "^[a-z]+" FSIM_COMPILER_NAME "${FSIM_COMPILER}")
+string(TOUPPER "${FSIM_COMPILER_NAME}" FSIM_COMPILER_NAME)
 
 find_package(Threads REQUIRED)
 
