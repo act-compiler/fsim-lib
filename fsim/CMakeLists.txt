@@ -16,6 +16,10 @@ elseif(FSIM_COMPILER STREQUAL "xla-0.4-cpu")
   set(FSIM_PJRT jax-0.4.33-cpu)
 elseif(FSIM_COMPILER MATCHES "^(xla-0\\.11|custom)-gpu$")
   set(FSIM_PJRT jax-0.11.2-cuda12)
+  # Its CUDA libraries under nvidia/, in jax's preload order.
+  set(FSIM_PJRT_CUDA cuda_runtime/lib/libcudart.so.12 cuda_nvrtc/lib/libnvrtc.so.12 cublas/lib/libcublas.so.12
+    cublas/lib/libcublasLt.so.12 nccl/lib/libnccl.so.2 cuda_cupti/lib/libcupti.so.12 cusparse/lib/libcusparse.so.12
+    cusolver/lib/libcusolver.so.11 cufft/lib/libcufft.so.11 nvshmem/lib/libnvshmem_host.so.3 cudnn/lib/libcudnn.so.9)
 elseif(FSIM_COMPILER STREQUAL "xla-0.4-gpu")
   set(FSIM_PJRT jax-0.4.33-cuda12)
 else()
@@ -54,5 +58,12 @@ target_include_directories(fsim PUBLIC include PRIVATE src)
 target_include_directories(fsim SYSTEM PRIVATE "${FSIM_PJRT_DIR}/include")
 target_compile_definitions(fsim PRIVATE "FSIM_PJRT_PLUGIN=\"${FSIM_PJRT_PLUGIN}\""
   FSIM_VARIANT_${FSIM_VARIANT_NAME} FSIM_COMPILER_${FSIM_COMPILER_NAME} FSIM_DEVICE_${FSIM_DEVICE_NAME})
+# The entry's nvidia/ dir and its CUDA libraries, as C strings.
+if(FSIM_PJRT_CUDA)
+  list(TRANSFORM FSIM_PJRT_CUDA REPLACE "^.+$" "\"\\0\"")
+  list(JOIN FSIM_PJRT_CUDA "," FSIM_PJRT_CUDA)
+  target_compile_definitions(fsim PRIVATE "FSIM_PJRT_NVIDIA=\"${FSIM_PJRT_DIR}/nvidia\""
+    "FSIM_PJRT_CUDA=${FSIM_PJRT_CUDA}")
+endif()
 target_compile_options(fsim PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(fsim PUBLIC Threads::Threads ${CMAKE_DL_LIBS})

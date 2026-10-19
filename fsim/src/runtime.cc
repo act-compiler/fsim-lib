@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 
@@ -10,6 +11,14 @@
 namespace fsim {
 
 Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
+#ifdef FSIM_PJRT_CUDA
+  // The entry's CUDA libraries load first, as jax preloads them.
+  for (const char *library : {FSIM_PJRT_CUDA}) {
+    std::string path = std::string(FSIM_PJRT_NVIDIA) + "/" + library;
+    if (!dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL))
+      throw std::runtime_error(std::string("fsim: dlopen: ") + dlerror());
+  }
+#endif
   // The plugin stays loaded until the process exits.
   void *plugin = dlopen(FSIM_PJRT_PLUGIN, RTLD_NOW | RTLD_LOCAL);
   if (!plugin)
