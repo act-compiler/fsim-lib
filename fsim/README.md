@@ -7,6 +7,7 @@ The common simulation library: a static C++ library that compiles StableHLO modu
   - `tensor.h`
   - `pipeline.h`
 - `src/`: the implementation; no PJRT type leaves it.
+- `passes/`: the pass stage of the `custom-` compilers, and its `fsim-passes` tool.
 - `third_party/`: what `setup.sh` sets up:
   - `pjrt/<entry>/`: per PJRT entry, the PJRT C API header and the plugin
   - `mlir/`: the MLIR and StableHLO headers in `include/` and static libraries in `lib/`, at StableHLO's pins
@@ -31,10 +32,22 @@ The compiler picks the entry whose header the library builds against and whose p
 | `xla-0.4-gpu`  | GPU    | `jax-0.4.33-cuda12` |
 | `custom-gpu`   | GPU    | `jax-0.11.2-cuda12` |
 
-- A `custom-` compiler runs the library's StableHLO passes before compile, none yet.
+- A `custom-` compiler runs the pass stage on every module before compile; its time counts in the module's compile.
+- The configure of a `custom-` compiler fails when the MLIR toolchain is not set up.
 - The configure fails when the entry's plugin is not set up.
 - A CPU build runs on one CPU device, and a GPU build on the first device the plugin reports.
 - A `jax-0.11.2-cuda12` build first loads the CUDA libraries jax preloads, from its entry's `nvidia/`.
+
+Each compiler compiles with these XLA option overrides:
+
+| compiler       | XLA options                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `xla-0.11-cpu` | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True`                             |
+| `xla-0.4-cpu`  | `xla_backend_optimization_level=1`                             |
+| `custom-cpu`   | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True`                             |
+| `xla-0.11-gpu` | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
+| `xla-0.4-gpu`  | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
+| `custom-gpu`   | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
 
 A plugin of an older minor version than the header loads when it has every PJRT function the library calls.
 The variants flush and run as follows:
@@ -56,6 +69,25 @@ Outside `overlap`, `submit` runs each module before it returns.
 
 A knob the build lacks, or 0 threads, prints the refusal and exits 1.
 `Pipeline::soft_trigger(ops)` tells a driver whether a graph of `ops` ops, the prologue counted, flushes now.
+
+The pass stage is `fsim_passes`, a shared object with only `passes.h`'s C entry visible, so its static MLIR never meets a driver's LLVM.
+It takes a module's text and returns a versioned StableHLO artifact, which PJRT compiles in place of the text:
+
+- parse the text into the `func` and `stablehlo` dialects
+- CSE, the stock StableHLO target-independent optimization, canonicalize, CSE
+- the library's own passes, `fsim::addPasses` in `passes/fsim_passes.cc`, none yet
+- `tf.aliasing_output` on every `@main` argument, so each state tensor updates in place
+- serialize at the StableHLO version jax 0.11.2's XLA accepts
+
+A failed phase fails the module's compile with the phase's diagnostics.
+`fsim-passes` runs the stage over a module file, prints the op counts and each phase's ms, and writes the artifact, or the text with `--text`:
+
+- `--trace` prints each pass's ms and the op count after it.
+- `--histogram` prints the final op count per op name.
+
+```bash
+./docker/exec.sh "fsim/build/fsim-passes <in.mlir> -o <out.bc> [--text] [--trace] [--histogram]"
+```
 
 `setup.sh` takes two flags, and without either sets up the default entry and the toolchain:
 

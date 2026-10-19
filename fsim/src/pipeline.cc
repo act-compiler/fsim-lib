@@ -21,6 +21,9 @@
 #endif
 
 #include "compile_options.h"
+#ifdef FSIM_COMPILER_CUSTOM
+#include "passes.h"
+#endif
 #include "pjrt.h"
 
 namespace fsim {
@@ -66,8 +69,16 @@ std::string signature(PJRT_Buffer_Type type, const int64_t *dims, size_t num_dim
 }
 
 #ifdef FSIM_COMPILER_CUSTOM
-// The library's StableHLO passes; none yet.
-void passes(std::string &) {
+// Runs the pass stage; the text becomes its artifact.
+void passes(std::string &text) {
+  char *out = nullptr;
+  size_t size = 0;
+  int failed = fsim_passes_run(text.data(), text.size(), &out, &size);
+  std::string result(out, size);
+  fsim_passes_free(out);
+  if (failed)
+    throw std::runtime_error("fsim: " + result);
+  text = std::move(result);
 }
 #endif
 

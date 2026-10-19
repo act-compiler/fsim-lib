@@ -57,7 +57,8 @@ target_compile_features(fsim PUBLIC cxx_std_20)
 target_include_directories(fsim PUBLIC include PRIVATE src)
 target_include_directories(fsim SYSTEM PRIVATE "${FSIM_PJRT_DIR}/include")
 target_compile_definitions(fsim PRIVATE "FSIM_PJRT_PLUGIN=\"${FSIM_PJRT_PLUGIN}\""
-  FSIM_VARIANT_${FSIM_VARIANT_NAME} FSIM_COMPILER_${FSIM_COMPILER_NAME} FSIM_DEVICE_${FSIM_DEVICE_NAME})
+  "FSIM_COMPILER_ID=\"${FSIM_COMPILER}\"" FSIM_VARIANT_${FSIM_VARIANT_NAME} FSIM_COMPILER_${FSIM_COMPILER_NAME}
+  FSIM_DEVICE_${FSIM_DEVICE_NAME})
 # The entry's nvidia/ dir and its CUDA libraries, as C strings.
 if(FSIM_PJRT_CUDA)
   list(TRANSFORM FSIM_PJRT_CUDA REPLACE "^.+$" "\"\\0\"")
@@ -67,3 +68,9 @@ if(FSIM_PJRT_CUDA)
 endif()
 target_compile_options(fsim PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(fsim PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+
+# A custom compiler runs the pass stage before every compile.
+if(FSIM_COMPILER_NAME STREQUAL "CUSTOM")
+  add_subdirectory(passes)
+  target_link_libraries(fsim PRIVATE fsim_passes)
+endif()
