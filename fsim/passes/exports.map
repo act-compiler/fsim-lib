@@ -1,0 +1,7 @@
+{
+  global:
+    fsim_passes_run;
+    fsim_passes_free;
+  local:
+    *;
+};
