@@ -1,21 +1,27 @@
 #!/bin/bash
-# Sets up one PJRT entry under fsim/third_party/: the PJRT C API header
-# of its XLA commit, pinned by sha256, and its plugin.
+# Sets up one PJRT entry and the MLIR toolchain under fsim/third_party/.
+# An entry is the PJRT C API header of its XLA commit, pinned by sha256, and its plugin.
 # A -cpu plugin is unpacked from dist/ or else built from jax's Bazel
 # workspace at the entry's tag; a build packs the tarball into dist/.
 # A -cuda12 plugin and its CUDA come from PyPI wheels, pinned by sha256 and kept in dist/.
-#   ./fsim/setup.sh [--pjrt NAME]
+# The toolchain is MLIR and StableHLO's static libraries and headers at StableHLO's pins,
+# unpacked from dist/ or else built from source; a build packs the tarball into dist/.
+#   ./fsim/setup.sh [--pjrt NAME] [--mlir]
 set -euo pipefail
 cd "$(dirname "$0")"
 
 usage() {
-  echo "usage: $0 [--pjrt NAME]"
+  echo "usage: $0 [--pjrt NAME] [--mlir]"
   echo "  NAME: jax-0.11.2-cpu (default), jax-0.4.33-cpu, jax-0.11.2-cuda12 or jax-0.4.33-cuda12"
-  echo "  fetches the entry's header, then unpacks its plugin from third_party/dist/:"
+  echo "  --pjrt fetches the entry's header, then unpacks its plugin from third_party/dist/:"
   echo "  a -cpu tarball, built there first when absent, or -cuda12 wheels, fetched there first"
+  echo "  --mlir unpacks the toolchain's tarball from third_party/dist/, built there first when absent"
+  echo "  no flag sets up the default entry and the toolchain"
 }
 
 name=jax-0.11.2-cpu
+want_pjrt=
+want_mlir=
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
@@ -28,7 +34,12 @@ while [ $# -gt 0 ]; do
         exit 1
       }
       name=$2
+      want_pjrt=1
       shift 2
+      ;;
+    --mlir)
+      want_mlir=1
+      shift
       ;;
     *)
       echo "unknown argument: $1" >&2
@@ -37,6 +48,8 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+# No flag sets up both.
+[ -n "$want_pjrt$want_mlir" ] || want_pjrt=1 want_mlir=1
 
 # The pins per jax release: tag commit, XLA commit, header, CPU build flags.
 arch=$(uname -m)
@@ -134,6 +147,20 @@ all aarch64 nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylin
 "
 # This entry's wheels, a file and a sha256 per line.
 pins=$(awk -v r="$release" -v a="$arch" '($1 == r || $1 == "all") && $2 == a { print $3, $4 }' <<<"$wheels")
+
+# The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
+stablehlo_tag=v1.20.0
+stablehlo=639335932274930617d9724fb25ec9f2f52c5e40
+llvm=ab547095ead5464dc024d66264d9b8a987f429f3
+# The toolchain's targets, built with their link closure.
+mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms MLIRFuncDialect MLIRPass MLIRSupport
+  StablehloOps StablehloPasses StablehloOptimizationPasses StablehloSerialization StablehloPortableApi VhloOps Version)
+
+# The toolchain layout: install, dist tarball, build scratch.
+mlir=third_party/mlir
+mlir_pack=mlir-$stablehlo_tag-linux-$arch
+mlir_tarball=$dist/$mlir_pack.tar.gz
+mlir_build=$PWD/$mlir/build
 
 # True when the file exists with this sha256.
 matches() { [ -f "$1" ] && echo "$2  $1" | sha256sum -c --status; }
@@ -233,31 +260,119 @@ unpack_wheels() {
   echo "$pins" >"$out/lib/wheels.txt"
 }
 
-# The header, skipped when already pinned.
-if ! matches "$header" "$header_sha"; then
-  mkdir -p "$(dirname "$header")"
-  fetch "$header" "https://raw.githubusercontent.com/openxla/xla/$xla/xla/pjrt/c/pjrt_c_api.h" "$header_sha"
-fi
-
-# A -cuda12 plugin from its wheels.
-if [ "$so" = xla_cuda_plugin.so ]; then
-  unpack_wheels
-  echo "pjrt: $header $out/lib/$so"
-  exit 0
-fi
-
-# The plugin, built only when dist/ lacks its tarball.
-[ -f "$tarball" ] || build_plugin
-(cd "$dist" && sha256sum -c --status "$pack.tar.gz.sha256") || {
-  echo "sha256 mismatch: $tarball" >&2
-  exit 1
+# Fail unless a dist/ tarball matches its sidecar.
+verify_tarball() {
+  (cd "$dist" && sha256sum -c --status "$1.sha256") || {
+    echo "sha256 mismatch: $dist/$1" >&2
+    exit 1
+  }
 }
 
-# The unpack, skipped when lib/ came from this tarball.
-if ! { [ -f "$out/lib/$so" ] && cmp -s "$tarball.sha256" "$out/lib/$pack.tar.gz.sha256"; }; then
-  rm -rf "$out/lib"
-  mkdir -p "$out/lib"
-  tar -xzf "$tarball" --no-same-owner --strip-components=2 -C "$out/lib" "$pack/lib/$so"
-  cp "$tarball.sha256" "$out/lib/"
-fi
-echo "pjrt: $header $out/lib/$so"
+# Set up the entry: its header, then its plugin.
+setup_pjrt() {
+  # The header, skipped when already pinned.
+  if ! matches "$header" "$header_sha"; then
+    mkdir -p "$(dirname "$header")"
+    fetch "$header" "https://raw.githubusercontent.com/openxla/xla/$xla/xla/pjrt/c/pjrt_c_api.h" "$header_sha"
+  fi
+
+  # A -cuda12 plugin from its wheels.
+  if [ "$so" = xla_cuda_plugin.so ]; then
+    unpack_wheels
+    echo "pjrt: $header $out/lib/$so"
+    return
+  fi
+
+  # The plugin, built only when dist/ lacks its tarball.
+  [ -f "$tarball" ] || build_plugin
+  verify_tarball "$pack.tar.gz"
+
+  # The unpack, skipped when lib/ came from this tarball.
+  if ! { [ -f "$out/lib/$so" ] && cmp -s "$tarball.sha256" "$out/lib/$pack.tar.gz.sha256"; }; then
+    rm -rf "$out/lib"
+    mkdir -p "$out/lib"
+    tar -xzf "$tarball" --no-same-owner --strip-components=2 -C "$out/lib" "$pack/lib/$so"
+    cp "$tarball.sha256" "$out/lib/"
+  fi
+  echo "pjrt: $header $out/lib/$so"
+}
+
+# Fetch one commit of a GitHub repo, refetched unless at the pin.
+fetch_commit() {
+  local git=(git -c safe.directory="$2" -C "$2")
+  [ "$("${git[@]}" rev-parse -q --verify HEAD 2>/dev/null)" = "$3" ] || {
+    rm -rf "$2"
+    git init -q "$2"
+    "${git[@]}" fetch -q --depth 1 "https://github.com/$1.git" "$3"
+    "${git[@]}" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  }
+  [ "$("${git[@]}" rev-parse HEAD)" = "$3" ] || {
+    echo "$2 is not at $3" >&2
+    exit 1
+  }
+}
+
+# Copy the headers of source dirs under a root, keeping their paths.
+copy_headers() {
+  local root=$1 to=$2
+  shift 2
+  (cd "$root" && find "$@" \( -name '*.h' -o -name '*.inc' -o -name '*.def' \) -exec cp --parents -t "$to" {} +)
+}
+
+# Build the toolchain from source, then pack it into dist/.
+build_mlir() {
+  local src=$mlir_build/src bin=$mlir_build/llvm
+  local to=$mlir_build/$mlir_pack
+  fetch_commit llvm/llvm-project "$src/llvm" "$llvm"
+  fetch_commit openxla/stablehlo "$src/stablehlo" "$stablehlo"
+
+  # LLVM and MLIR with StableHLO as an external project, no tools or tests.
+  echo "mlir: building StableHLO $stablehlo_tag, about 10 min"
+  cmake -G Ninja -S "$src/llvm/llvm" -B "$bin" -Wno-dev \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DLLVM_USE_LINKER=/usr/bin/ld.lld-18 \
+    -DLLVM_ENABLE_PROJECTS=mlir -DLLVM_TARGETS_TO_BUILD=host -DLLVM_ENABLE_ASSERTIONS=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_BUILD_TOOLS=OFF \
+    -DLLVM_ENABLE_BINDINGS=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_LIBXML2=OFF \
+    -DMLIR_INCLUDE_TESTS=OFF -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+    -DLLVM_EXTERNAL_PROJECTS=stablehlo -DLLVM_EXTERNAL_STABLEHLO_SOURCE_DIR="$src/stablehlo" \
+    -DSTABLEHLO_ENABLE_BINDINGS_PYTHON=OFF -DMLIR_INCLUDE_DIRS="$src/llvm/mlir/include"
+  ninja -C "$bin" -j"$(nproc)" "${mlir_targets[@]}"
+
+  # The source headers, then the generated ones.
+  rm -rf "$to"
+  mkdir -p "$to/include" "$to/lib"
+  copy_headers "$src/llvm/llvm/include" "$to/include" llvm llvm-c
+  copy_headers "$src/llvm/mlir/include" "$to/include" mlir mlir-c
+  copy_headers "$src/stablehlo" "$to/include" stablehlo
+  copy_headers "$bin/include" "$to/include" llvm
+  copy_headers "$bin/tools/mlir/include" "$to/include" mlir
+  copy_headers "$bin/tools/stablehlo" "$to/include" stablehlo
+  # The static libraries, less the build's own tablegen.
+  find "$bin/lib" -maxdepth 1 -name '*.a' ! -name '*TableGen*' ! -name '*Tblgen*' -exec cp -t "$to/lib" {} +
+  printf 'stablehlo %s %s\nllvm %s\n' "$stablehlo_tag" "$stablehlo" "$llvm" >"$to/pins.txt"
+
+  # The tarball and its sidecar, then no build state.
+  mkdir -p "$dist"
+  tar -czf "$mlir_tarball.part" -C "$mlir_build" "$mlir_pack"
+  printf '%s  %s\n' "$(sha256sum <"$mlir_tarball.part" | cut -d' ' -f1)" "$mlir_pack.tar.gz" >"$mlir_tarball.sha256"
+  mv "$mlir_tarball.part" "$mlir_tarball"
+  rm -rf "$mlir_build"
+}
+
+# Set up the toolchain, built only when dist/ lacks its tarball.
+setup_mlir() {
+  [ -f "$mlir_tarball" ] || build_mlir
+  verify_tarball "$mlir_pack.tar.gz"
+
+  # The unpack, skipped when lib/ came from this tarball.
+  if ! { [ -d "$mlir/lib" ] && cmp -s "$mlir_tarball.sha256" "$mlir/$mlir_pack.tar.gz.sha256"; }; then
+    rm -rf "$mlir/include" "$mlir/lib" "$mlir/pins.txt"
+    mkdir -p "$mlir"
+    tar -xzf "$mlir_tarball" --no-same-owner --strip-components=1 -C "$mlir"
+    cp "$mlir_tarball.sha256" "$mlir/"
+  fi
+  echo "mlir: $mlir/include $mlir/lib"
+}
+
+[ -z "$want_pjrt" ] || setup_pjrt
+[ -z "$want_mlir" ] || setup_mlir
