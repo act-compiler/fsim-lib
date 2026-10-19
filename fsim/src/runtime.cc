@@ -56,10 +56,9 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   addressable.struct_size = PJRT_Client_AddressableDevices_Args_STRUCT_SIZE;
   addressable.client = impl_->client;
   impl_->check(api->PJRT_Client_AddressableDevices(&addressable), "PJRT_Client_AddressableDevices");
-  if (addressable.num_addressable_devices != 1)
-    throw std::runtime_error("fsim: client has " +
-                             std::to_string(addressable.num_addressable_devices) +
-                             " addressable devices, expected 1");
+  // The first addressable device runs every module.
+  if (addressable.num_addressable_devices == 0)
+    throw std::runtime_error("fsim: client has no addressable devices");
   impl_->device = addressable.addressable_devices[0];
 }
 
