@@ -1,0 +1,9 @@
+# Conda environment for this project. Edit freely.
+name: base
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - pip
+  - pip:
+      - ml_dtypes==0.6.0
