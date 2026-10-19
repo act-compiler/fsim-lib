@@ -20,7 +20,8 @@ target_link_libraries(fsim_mlir INTERFACE -Wl,--start-group ${FSIM_MLIR_LIBS} -W
   ${CMAKE_DL_LIBS})
 
 # The stage's objects, shared by the shared object and the tool.
-add_library(fsim_passes_stage OBJECT passes.cc fsim_passes.cc)
+add_library(fsim_passes_stage OBJECT passes.cc fsim_passes.cc window.cc byte_grids.cc forward_slices.cc
+  dead_updates.cc)
 set_target_properties(fsim_passes_stage PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(fsim_passes_stage PUBLIC cxx_std_20)
 target_compile_options(fsim_passes_stage PRIVATE -Wall -Wextra -Werror -fvisibility=hidden

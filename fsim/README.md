@@ -40,14 +40,14 @@ The compiler picks the entry whose header the library builds against and whose p
 
 Each compiler compiles with these XLA option overrides:
 
-| compiler       | XLA options                                                    |
-| -------------- | -------------------------------------------------------------- |
-| `xla-0.11-cpu` | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True`                             |
-| `xla-0.4-cpu`  | `xla_backend_optimization_level=1`                             |
-| `custom-cpu`   | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True`                             |
-| `xla-0.11-gpu` | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
-| `xla-0.4-gpu`  | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
-| `custom-gpu`   | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False` |
+| compiler       | XLA options                                                                           |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `xla-0.11-cpu` | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True` |
+| `xla-0.4-cpu`  | `xla_backend_optimization_level=1`                                                    |
+| `custom-cpu`   | `xla_backend_optimization_level=1`, `xla_cpu_copy_insertion_use_region_analysis=True` |
+| `xla-0.11-gpu` | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False`                        |
+| `xla-0.4-gpu`  | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False`                        |
+| `custom-gpu`   | `xla_gpu_autotune_level=0`, `xla_gpu_enable_triton_gemm=False`                        |
 
 A plugin of an older minor version than the header loads when it has every PJRT function the library calls.
 The variants flush and run as follows:
@@ -75,7 +75,15 @@ It takes a module's text and returns a versioned StableHLO artifact, which PJRT 
 
 - parse the text into the `func` and `stablehlo` dialects
 - CSE, the stock StableHLO target-independent optimization, canonicalize, CSE
-- the library's own passes, `fsim::addPasses` in `passes/fsim_passes.cc`, none yet
+- the library's own passes, `fsim::addPasses` in `passes/fsim_passes.cc`, in order, with canonicalize and CSE after the first, and `fsim-byte-grids`, canonicalize and CSE again at the end:
+  - `fsim-byte-grids` sinks a bitcast between a `[..., K]` byte grid and `K`-byte elements below the slices, reshapes and updates that use it.
+    Byte tensors stay bytes, and bitcasts act on tiles.
+    An update of a 2-D byte tensor's `[P, M, K]` grid runs in the byte tensor's own shape.
+  - `fsim-forward-slices` walks a slice up its chain of updates, past each one it misses.
+    An update with constant indices that holds its window hands the slice its tile.
+    A slice that misses every update reads the chain's head.
+  - `fsim-dead-updates` walks a returned value up its chain of single-use updates.
+    An update the later ones overwrite is dropped.
 - `tf.aliasing_output` on every `@main` argument, so each state tensor updates in place
 - serialize at the StableHLO version jax 0.11.2's XLA accepts
 
