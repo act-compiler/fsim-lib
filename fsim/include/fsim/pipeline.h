@@ -1,9 +1,9 @@
 // The pipeline: state tensors on the device, advanced by StableHLO modules.
-// Each module's @main takes every state tensor in order and returns them all
-// in order. submit() queues a module and returns; modules compile in parallel
-// and execute strictly in submission order. sync() waits, then copies the
-// state back to host memory. One caller thread drives a pipeline. Built with
-// FSIM_VARIANT other than overlap, submit() compiles and executes before it returns.
+// Each module's @main takes every state tensor in order and returns them all in order.
+// submit() queues a module and returns; modules compile in parallel.
+// Modules execute strictly in submission order.
+// sync() waits, then copies the state back to host memory; one caller thread drives a pipeline.
+// Outside the overlap variant, submit() compiles and executes in place before it returns.
 #pragma once
 
 #include <cstddef>
@@ -18,20 +18,10 @@
 
 namespace fsim {
 
-// One module's timings, in ms since the pipeline's construction.
+// One module's timings, in ms.
 struct ModuleStats {
-  size_t bytes = 0;
-  double compile_begin_ms = 0;
-  double compile_end_ms = 0;
-  double execute_begin_ms = 0;
-  double execute_end_ms = 0;
-
-  double compile_ms() const {
-    return compile_end_ms - compile_begin_ms;
-  }
-  double execute_ms() const {
-    return execute_end_ms - execute_begin_ms;
-  }
+  double compile_ms = 0;
+  double execute_ms = 0;
 };
 
 // Every submitted module's stats, in submission order.
@@ -41,13 +31,12 @@ struct Stats {
   size_t module_count() const {
     return modules.size();
   }
-  size_t total_bytes() const;
 };
 
 // Run-time knobs; an unset one takes the library's default.
 struct Knobs {
   std::optional<uint32_t> trigger; // soft trigger op count, default 10000
-  std::optional<unsigned> threads; // compile thread count, default 4
+  std::optional<uint32_t> threads; // compile thread count, default 4
 
   // Consumes --trigger N and --overlap T from argv and keeps them for every
   // pipeline; returns the new argc. A bad value, or a knob this build lacks,

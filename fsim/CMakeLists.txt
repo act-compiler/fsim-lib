@@ -9,12 +9,10 @@ set(FSIM_PJRT_PLUGIN "${FSIM_PJRT_DIR}/lib/pjrt_c_api_cpu_plugin.so")
 
 # The build's variant and compiler, each fixed at configure time.
 set(FSIM_VARIANT overlap CACHE STRING "Variant: eager, taidl, trigger or overlap")
-set_property(CACHE FSIM_VARIANT PROPERTY STRINGS eager taidl trigger overlap)
 if(NOT FSIM_VARIANT MATCHES "^(eager|taidl|trigger|overlap)$")
   message(FATAL_ERROR "Unknown FSIM_VARIANT '${FSIM_VARIANT}': pass eager, taidl, trigger or overlap")
 endif()
 set(FSIM_COMPILER custom CACHE STRING "Compiler: xla or custom")
-set_property(CACHE FSIM_COMPILER PROPERTY STRINGS xla custom)
 if(NOT FSIM_COMPILER MATCHES "^(xla|custom)$")
   message(FATAL_ERROR "Unknown FSIM_COMPILER '${FSIM_COMPILER}': pass xla or custom")
 endif()

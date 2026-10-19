@@ -1,6 +1,6 @@
 // A protobuf wire encoder for the compile options, varints and
-// length-delimited fields only. Field numbers cite XLA's protos at
-// commit 6b73c4c49eb0c5aee1963c1e34c7cc8ba92ac202, by file and line.
+// length-delimited fields only. The field numbers are those of
+// xla/pjrt/proto/compile_options.proto.
 #include "compile_options.h"
 
 #include <cstdint>
@@ -43,16 +43,13 @@ private:
 } // namespace
 
 std::string compile_options() {
-  // ExecutableBuildOptionsProto, xla/pjrt/proto/compile_options.proto:26.
+  // ExecutableBuildOptionsProto: field 4, num_replicas; field 5, num_partitions.
   ProtoWriter build;
-  // num_replicas = 4, xla/pjrt/proto/compile_options.proto:51.
   build.varint(4, 1);
-  // num_partitions = 5, xla/pjrt/proto/compile_options.proto:54.
   build.varint(5, 1);
 
-  // CompileOptionsProto, xla/pjrt/proto/compile_options.proto:175.
+  // CompileOptionsProto: field 3, executable_build_options.
   ProtoWriter options;
-  // executable_build_options = 3, xla/pjrt/proto/compile_options.proto:179.
   options.message(3, build);
   return options.str();
 }
