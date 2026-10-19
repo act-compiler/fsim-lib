@@ -24,9 +24,16 @@ struct ModuleStats {
   double execute_ms = 0;
 };
 
+// The overlap executor's idle time, in ms.
+struct Waits {
+  double tracing_ms = 0; // next module not yet submitted
+  double compile_ms = 0; // next module submitted, not compiled
+};
+
 // Every submitted module's stats, in submission order.
 struct Stats {
   std::vector<ModuleStats> modules;
+  std::optional<Waits> waits; // set in the overlap variant only
 
   size_t module_count() const {
     return modules.size();

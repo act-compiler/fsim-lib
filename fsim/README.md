@@ -69,6 +69,11 @@ Outside `overlap`, `submit` runs each module before it returns.
 
 A knob the build lacks, or 0 threads, prints the refusal and exits 1.
 `Pipeline::soft_trigger(ops)` tells a driver whether a graph of `ops` ops, the prologue counted, flushes now.
+`Pipeline::stats()` gives each module's compile and execute ms.
+In `overlap` its `waits` sums the executor's idle ms, each wait counted once it takes a module:
+
+- `tracing_ms`: idle while the next module is not yet submitted, for diagnosis only
+- `compile_ms`: idle while the next module is submitted but not yet compiled, the run's compile overhead
 
 The pass stage is `fsim_passes`, a shared object with only `passes.h`'s C entry visible, so its static MLIR never meets a driver's LLVM.
 It takes a module's text and returns a versioned StableHLO artifact, which PJRT compiles in place of the text:

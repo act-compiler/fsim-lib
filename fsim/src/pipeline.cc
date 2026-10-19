@@ -150,6 +150,7 @@ void Pipeline::Impl::start() {
     rt.await(args.done_with_host_buffer);
   }
 #ifdef FSIM_VARIANT_OVERLAP
+  stats.waits.emplace();
   for (uint32_t i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
     workers.emplace_back(&Impl::compile_loop, this);
   executor = std::thread(&Impl::execute_loop, this);
@@ -213,11 +214,21 @@ void Pipeline::Impl::compile_loop() {
 void Pipeline::Impl::execute_loop() {
   std::unique_lock lock(mutex);
   for (;;) {
+    // Idle ms: unsubmitted is tracing, uncompiled is compile.
+    double tracing = 0, compile = 0;
+    bool submitted = false;
+    Clock::time_point mark = Clock::now();
     changed.wait(lock, [&] {
-      return stop || (!error && next_execute < modules.size() && modules[next_execute].compiled);
+      (submitted ? compile : tracing) += ms_since(mark);
+      mark = Clock::now();
+      submitted = next_execute < modules.size();
+      return stop || (!error && submitted && modules[next_execute].compiled);
     });
     if (stop)
       return;
+    // A wait counts once it takes a module.
+    stats.waits->tracing_ms += tracing;
+    stats.waits->compile_ms += compile;
     Module &module = modules[next_execute];
     if (module.error) {
       error = module.error;
