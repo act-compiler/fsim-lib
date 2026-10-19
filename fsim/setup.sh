@@ -9,11 +9,11 @@ cd "$(dirname "$0")"
 
 usage() {
   echo "usage: $0 [--pjrt NAME]"
-  echo "  NAME: jax-0.11.2 (default) or jax-0.4.33"
+  echo "  NAME: jax-0.11.2-cpu (default) or jax-0.4.33-cpu"
   echo "  fetches the entry's header, then unpacks its plugin from third_party/dist/, built there first when absent"
 }
 
-name=jax-0.11.2
+name=jax-0.11.2-cpu
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
@@ -39,7 +39,7 @@ done
 # The pins per entry: jax tag and commit, XLA commit, header.
 arch=$(uname -m)
 case "$name" in
-  jax-0.11.2)
+  jax-0.11.2-cpu)
     jax=32544801e26115ac1794926d027148abf3baf009
     xla=91888df6ce85102c30220e41d952065925e10886
     header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
@@ -48,7 +48,7 @@ case "$name" in
       aarch64) flags=(--config=ci_linux_aarch64 --config=public_cache) ;;
     esac
     ;;
-  jax-0.4.33)
+  jax-0.4.33-cpu)
     jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
     xla=720b2c53346660e95abbed7cf3309a8b85e979f9
     header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
@@ -66,7 +66,9 @@ case "$name" in
     exit 1
     ;;
 esac
-tag=jax-v${name#jax-}
+# The jax release, which names the tag and the tarball.
+release=${name%-cpu}
+tag=jax-v${release#jax-}
 
 # The bazelisk pin per arch.
 case "$arch" in
@@ -88,7 +90,7 @@ esac
 out=third_party/pjrt/$name
 header=$out/include/xla/pjrt/c/pjrt_c_api.h
 so=pjrt_c_api_cpu_plugin.so
-pack=pjrt-cpu-$name-linux-$arch
+pack=pjrt-cpu-$release-linux-$arch
 dist=third_party/dist
 tarball=$dist/$pack.tar.gz
 build=$PWD/third_party/pjrt/build/$name
