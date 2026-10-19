@@ -31,6 +31,7 @@ The compiler picks the entry whose header the library builds against and whose p
 - A `custom-` compiler runs the library's StableHLO passes before compile, none yet.
 - The configure fails when the entry's plugin is not set up.
 - A CPU build runs on one CPU device, and a GPU build on the first device the plugin reports.
+- A `jax-0.11.2-cuda12` build first loads the CUDA libraries jax preloads, from its entry's `nvidia/`.
 
 A plugin of an older minor version than the header loads when it has every PJRT function the library calls.
 The variants flush and run as follows:
