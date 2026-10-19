@@ -10,10 +10,12 @@ Under review at a major systems conference.
 
 - `fsim/`: the library; `fsim/README.md` documents it.
 - `docker/`: the image and its wrappers; every command runs through them.
+- `benchmarks/nki/`: the nkilib benchmark cases and their generator under `gen/`.
 - `scripts/`: the host entry points over `docker/exec.sh`:
   - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
   - `build.sh`: the build of a target
   - `clean.sh`: the removal of generated files, only files git ignores
+  - `bench.sh`: the generation of the benchmark cases
 - `format/`: the formatter and its per-language configs.
 
 ## Running it
@@ -54,6 +56,24 @@ A `-cpu` plugin builds for 1-2 h when its tarball is absent from `fsim/third_par
 `./scripts/build.sh fsim` configures and builds the library into `fsim/build/`.
 It builds at the default compiler and variant of the cache variables `fsim/README.md` lists.
 
+## Bench
+
+`./scripts/bench.sh gen` generates the nki benchmark cases in the image's nki env.
+Each case is one nkilib kernel at one shape, one core's tensor-parallel shard of a Llama 3 or Llama 4 model.
+
+- `benchmarks/nki/gen/nkilib/cases.py` lists the cases, and each case's folder under `benchmarks/nki/` holds a `.gitkeep`.
+- `benchmarks/nki/suite.py` checks the list against the folders before any case is generated.
+- gen compiles each case's kernel for trn2 through nki's compiler into the folder's `kernel.neff`.
+- It writes the seeded inputs to `inputs/<tensor>.bin` and nkilib's torch reference output to `golden/<tensor>.bin`.
+- git ignores the generated files.
+- `--bench PATH` picks cases by name, directory or name prefix, and repeats; without one, gen regenerates every case.
+- The first failing case stops the run.
+
+```bash
+./scripts/bench.sh gen                                # regenerate every case
+./scripts/bench.sh gen --bench nkilib/attention_tkg   # regenerate one kernel's cases
+```
+
 ## Clean
 
 `./scripts/clean.sh` removes only files git ignores, and never anything under `work/`.
@@ -61,6 +81,7 @@ Without a flag it removes every ignored `__pycache__/` directory.
 
 - `--build`: also every ignored `build/` directory
 - `--third-party`: also `fsim/third_party/`, its `dist/` tarballs included, and implies `--build`
+- `--gen`: also every ignored file under `benchmarks/`, the generated cases, and implies `--build`
 - `-n`: prints what would go and removes nothing
 
 ```bash
