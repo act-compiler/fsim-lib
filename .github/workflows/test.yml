@@ -25,7 +25,9 @@ jobs:
         run: ./scripts/build.sh nki
 
       - name: Generate the nki suite
-        run: ./scripts/bench.sh gen --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail
+        run: ./scripts/bench.sh gen --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail --bench matmul
 
       - name: Run the nki suite
-        run: ./scripts/bench.sh run --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail
+        env:
+          FSIM_WALL_TIMEOUT: 300
+        run: ./scripts/bench.sh run --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail --bench matmul
