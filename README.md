@@ -9,11 +9,12 @@ Under review at a major systems conference.
 ## Layout
 
 - `fsim/`: the library; `fsim/README.md` documents it.
+- `drivers/nki/`: the NKI driver; `drivers/nki/README.md` documents it.
 - `docker/`: the image and its wrappers; every command runs through them.
 - `benchmarks/nki/`: the nkilib benchmark cases and their generator under `gen/`.
 - `scripts/`: the host entry points over `docker/exec.sh`:
   - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
-  - `build.sh`: the build of a target
+  - `build.sh`: the build of a target, `fsim` for the library or `nki` for the NKI driver at a `--compiler` and `--variant`
   - `clean.sh`: the removal of generated files, only files git ignores
   - `bench.sh`: the generation of the benchmark cases
 - `format/`: the formatter and its per-language configs.
@@ -55,6 +56,14 @@ A `-cpu` plugin builds for 1-2 h when its tarball is absent from `fsim/third_par
 
 `./scripts/build.sh fsim` configures and builds the library into `fsim/build/`.
 It builds at the default compiler and variant of the cache variables `fsim/README.md` lists.
+
+`./scripts/build.sh nki` configures and builds the NKI driver into `drivers/nki/build/<compiler>-<variant>/fsim-nki`.
+It builds the library from `fsim/` alongside, at the compiler and variant `--compiler` and `--variant` pick, `custom-cpu` and `overlap` by default.
+
+```bash
+./scripts/build.sh nki                       # build drivers/nki/build/custom-cpu-overlap/
+./scripts/build.sh nki --variant trigger     # build drivers/nki/build/custom-cpu-trigger/
+```
 
 ## Bench
 
