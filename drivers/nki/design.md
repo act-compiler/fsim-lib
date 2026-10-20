@@ -31,8 +31,15 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
   - `--variant trigger`
 - `bench.sh run --isa nki` runs one build, picked by the same `--compiler` and `--variant`; `README.md`'s Bench lists its flags.
 - It resolves cases as `gen` does and checks `out/out.bin` against `golden/out.bin`.
-- The check is the max relative error, at most 3e-2 for bf16 and 1e-3 for f32.
-- Each element's relative error divides by at least a floor of max |golden| times 0.1 for bf16, or 0.01 for f32.
+- The check is the max relative error, at most the dtype's bound below.
+- Each element's relative error divides by at least a floor of max |golden| times the dtype's fraction:
+
+  | Dtype | Max relative error | Floor fraction |
+  | ----- | ------------------ | -------------- |
+  | bf16  | 3e-2               | 0.1            |
+  | f16   | 1e-2               | 0.1            |
+  | f32   | 1e-3               | 0.01           |
+
 - A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace; the runner always passes the file.
 - It loads `<inputs>/<name>.bin` for each input allocation and writes `<outputs>/<name>.bin` for each output.
@@ -134,7 +141,7 @@ A view is one operand: `sbuf@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - An index view is a single `i32`; a multi-element `+s(...)` view is refused until M3.
 - A `+s(...)` offset moves within a partition row, never across partitions.
 - The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension until M3.
-- `dtype` is one of `bf16`, `f32`, `i32`, `u8`, `u16`, `u32`.
+- `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.
 
 ### Instructions
 
@@ -368,7 +375,7 @@ Within an M1 kind, M1 decodes these values, and any other fails at decode until 
 ## Scope and limits
 
 - One target, trn2 at lnc=1: one core, no `program_id` sharding, no `sendrecv` or `core_barrier`.
-- The dtypes above, with bf16, f32, i32 and u8 as the kernels' data; no fp8, no MX and no collectives, on which the backend raises.
+- The dtypes above, with bf16, f16, f32, i32 and u8 as the kernels' data; no fp8, no MX and no collectives, on which the backend raises.
 - Execution is one program order, as in nki's simulator: no engines, semaphores or scheduling, so no race is modelled.
 - Inputs are `shared_hbm`, as a compiled kernel sees them; this is what lets all_expert record.
 - A kernel that converts a register to a Python value cannot be recorded; the backend raises, as nki's compiler frontend does.
