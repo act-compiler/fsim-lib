@@ -25,11 +25,14 @@ Under review at a major systems conference.
 Everything runs in the container; nothing is installed on the host.
 
 ```bash
-./docker/build.sh                 # build the image, fsim-lib:latest-<arch>
+./docker/build.sh                 # build the image, fsim-lib:latest-<arch>, on the env image
 ./scripts/setup.sh                # set up the default PJRT entry and the MLIR toolchain
 ./scripts/build.sh fsim           # build the library into fsim/build/
 ```
 
+- `docker/build.sh` pulls the env image `devanshdvj/fsim-lib-env` at `docker/fsim-env.env`'s `FSIM_ENV_TAG`, and builds it locally when the pull fails and `FSIM_ENV_TAG` equals `FSIM_ENV_BUILD_TAG`.
+- The env image holds only open-source parts, and the build adds nki and its compiler from AWS's pip index.
+- The env image holds no CUDA; a GPU host adds it through the GPU entry under Setup.
 - `./docker/build.sh --rebuild` replaces an existing image.
 - `docker/exec.sh` passes every GPU when the host has the nvidia runtime.
 
@@ -50,7 +53,7 @@ A part already in `fsim/third_party/` is skipped.
 A `-cpu` plugin builds for 1-2 h when its tarball is absent from `fsim/third_party/dist/`, and the toolchain for about 10 min.
 
 ```bash
-./scripts/setup.sh --pjrt jax-0.11.2-cuda12   # set up one GPU entry
+./scripts/setup.sh --pjrt jax-0.11.2-cuda12   # a GPU host adds CUDA: one GPU entry and its wheels
 ```
 
 ## Build

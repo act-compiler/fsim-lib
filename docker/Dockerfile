@@ -1,9 +1,15 @@
+# Two stages, which build.sh picks with --target:
+#   env    the published devanshdvj/fsim-lib-env, open-source parts only
+#   local  the env image plus neuronx-cc and nki from AWS's index, never published
+# OS image; build.sh passes BASE_OS (a CUDA image works too)
+ARG OS=ubuntu:24.04
+# The env image local builds on, the env stage unless build.sh passes one
+ARG FSIM_ENV_IMAGE=env
+
 # ==== base ====
 # Shared base: system packages, node, conda, rust, formatters, entrypoint.
 # A block runs from its marker to the next; derive.sh drops untaken ones.
-# OS image; build.sh passes BASE_OS (a CUDA image works too)
-ARG OS=ubuntu:24.04
-FROM ${OS}
+FROM ${OS} AS env
 ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -54,11 +60,10 @@ RUN conda env update -n base -f /tmp/environment.yml && conda clean -afy
 
 # ---- project toolchain: add the project's own blocks below ----
 
-# nki compiler env; its wheels need python 3.12
+# nki compiler env, its open-source packages only; its wheels need python 3.12
+COPY nki-requirements.txt /tmp/nki-requirements.txt
 RUN conda create -y -n nki python=3.12 libarchive=3.8.8 \
-    && /opt/conda/envs/nki/bin/pip install --no-cache-dir \
-      --extra-index-url https://pip.repos.neuron.amazonaws.com \
-      neuronx-cc==2.27.5334.0 nki==0.6.0 \
+    && /opt/conda/envs/nki/bin/pip install --no-cache-dir -r /tmp/nki-requirements.txt \
     && /opt/conda/envs/nki/bin/pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu \
       torch==2.13.0+cpu \
@@ -69,6 +74,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       clang-18 lld-18 llvm-18-dev zlib1g-dev cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
+# the CPU tarballs setup.sh unpacks, from the dist context
+ARG PJRT_TARBALL MLIR_TARBALL
+COPY --from=dist ${PJRT_TARBALL}* ${MLIR_TARBALL}* /opt/fsim/dist/
+
+# the env's tag and the Neuron SDK its nki env matches
+ARG FSIM_ENV_TAG
+LABEL org.opencontainers.image.source=https://github.com/act-compiler/fsim-lib \
+      org.opencontainers.image.licenses=Apache-2.0 org.opencontainers.image.version=${FSIM_ENV_TAG} \
+      fsim.env=${FSIM_ENV_TAG} fsim.neuron-sdk=2.32.0
+
 # workspace and interactive entrypoint
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# ==== local ====
+# The env image plus neuronx-cc and nki, from AWS's index alone, no deps.
+FROM ${FSIM_ENV_IMAGE} AS local
+
+# Neuron SDK 2.32.0's compiler and nki; pip check finds a missing dep
+ARG NEURONX_CC_VERSION=2.27.5334.0
+ARG NKI_VERSION=0.6.0
+RUN /opt/conda/envs/nki/bin/pip install --no-cache-dir --no-deps \
+      --index-url https://pip.repos.neuron.amazonaws.com \
+      neuronx-cc==${NEURONX_CC_VERSION} nki==${NKI_VERSION} \
+    && /opt/conda/envs/nki/bin/pip check
+LABEL fsim.neuronx-cc=${NEURONX_CC_VERSION} fsim.nki=${NKI_VERSION}
