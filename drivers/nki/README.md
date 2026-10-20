@@ -10,11 +10,16 @@ Paths here are relative to the repo root.
 
 ```bash
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
+./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
+./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
 
 - `build.sh nki` builds `fsim-nki` against the library in `fsim/`, at one compiler and variant, `custom-cpu-overlap` by default.
+- `bench.sh gen --isa nki` records each case once into `kernel.trace` in its folder under `benchmarks/nki/`.
+- `bench.sh run --isa nki` hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the outputs against the case's golden.
+- A case's outputs go to `out/` in its folder under `benchmarks/nki/`, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` beside it.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace, loads each input from `--inputs` and writes each output to `--outputs`.
 - It ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
 

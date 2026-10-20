@@ -19,6 +19,10 @@ from nki.compiler.driver import compile_to_bir
 from nki.compiler.frontend import TracerFrontend
 from nki.compiler.ncc_driver import CompileOptions, compile_bir_to_neff
 
+# The shared trace step, in gen/.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from tracing import record_trace
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 # Fixed per-case compile dir, so the NEFF's recorded path never varies.
 WORK = os.path.join(tempfile.gettempdir(), 'nkilib-gen')
@@ -89,6 +93,7 @@ def generate(c):
         shutil.copyfile(neff, os.path.join(out, 'kernel.neff'))
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    t_record = record_trace(b, out)
     for n, a in b.tensors.items():
         write(tensor_file(out, 'inputs', n), a)
     t0 = time.perf_counter()
@@ -100,8 +105,10 @@ def generate(c):
     tensors[spec.name] = ('output', dt, shape)
     io_desc = ' '.join(f'{k[0]}:{n}:{dt}{list(s)}' for n, (k, dt, s) in sorted(tensors.items()))
     neff_b = os.path.getsize(os.path.join(out, 'kernel.neff'))
+    trace_b = os.path.getsize(os.path.join(out, 'kernel.trace'))
     print(
         f'OK {c["name"]} compile_s={t_compile:.1f} neff_b={neff_b} '
+        f'record_s={t_record:.1f} trace_b={trace_b} '
         f'golden_s={t_golden:.2f} disk_b={size} {io_desc}',
         flush=True,
     )
