@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: ./docker/build.sh
+
+      - name: Set up the toolchain
+        run: ./scripts/setup.sh
+
+      - name: Build the library
+        run: ./scripts/build.sh fsim
+
+      - name: Build the NKI driver
+        run: ./scripts/build.sh nki
+
+      - name: Generate the nki suite
+        run: ./scripts/bench.sh gen --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail
+
+      - name: Run the nki suite
+        run: ./scripts/bench.sh run --isa nki --bench nkilib/rmsnorm_tkg --bench nkilib/layernorm_tkg --bench nkilib/qkv_tkg --bench xfail
