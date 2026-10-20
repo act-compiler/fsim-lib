@@ -18,6 +18,7 @@ Under review at a major systems conference.
   - `clean.sh`: the removal of generated files, only files git ignores
   - `bench.sh`: the generation of one ISA's benchmark cases and their runs on one build of its driver
 - `format/`: the formatter and its per-language configs.
+- `docs/`: reports; `docs/nki-simulate.md` compares `nki.simulate` with runs on a trn2 chip.
 
 ## Running it
 
