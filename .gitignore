@@ -1,0 +1,19 @@
+# scratch for sessions and tools
+work/
+
+# the working plan, local only
+PLAN.md
+
+# python bytecode
+__pycache__/
+
+# build output
+build/
+fsim/third_party/
+
+# generated benchmark binaries and data
+*.neff
+*.bin
+
+# run logs
+*.log
