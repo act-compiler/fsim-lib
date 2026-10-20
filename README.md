@@ -11,7 +11,7 @@ Under review at a major systems conference.
 - `fsim/`: the library; `fsim/README.md` documents it.
 - `drivers/nki/`: the NKI driver; `drivers/nki/README.md` documents it.
 - `docker/`: the image and its wrappers; every command runs through them.
-- `benchmarks/nki/`: the nkilib benchmark cases and their generator under `gen/`.
+- `benchmarks/nki/`: the nkilib and xfail benchmark cases and their generators under `gen/`.
 - `scripts/`: the host entry points over `docker/exec.sh`:
   - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
   - `build.sh`: the build of a target, `fsim` for the library or `nki` for the NKI driver at a `--compiler` and `--variant`
@@ -68,13 +68,15 @@ It builds the library from `fsim/` alongside, at the compiler and variant `--com
 ## Bench
 
 `./scripts/bench.sh gen --isa nki` generates the nki benchmark cases in the image's nki env.
-Each case is one nkilib kernel at one shape, one core's tensor-parallel shard of a Llama 3 or Llama 4 model.
+Each `nkilib` case is one nkilib kernel at one shape, one core's tensor-parallel shard of a Llama 3 or Llama 4 model.
 
-- `benchmarks/nki/gen/nkilib/cases.py` lists the cases, and each case's folder under `benchmarks/nki/` holds a `.gitkeep`.
+- Each source's `benchmarks/nki/gen/<source>/cases.py` lists its cases, and each case's folder under `benchmarks/nki/` holds a `.gitkeep`.
 - `benchmarks/nki/suite.py` checks the list against the folders before any case is generated.
 - gen compiles each case's kernel for trn2 through nki's compiler into the folder's `kernel.neff`.
 - It records the kernel through `drivers/nki/record` into `kernel.trace`, the file `fsim-nki` reads.
 - It writes the seeded inputs to `inputs/<tensor>.bin` and nkilib's torch reference output to `golden/<tensor>.bin`.
+- Each `xfail` case breaks one trn2 memory limit at an explicit address, and gen writes only its `kernel.trace` and inputs.
+  Its gen line logs the compiler's rejection and whether `nki.simulate` runs it, and a compile that succeeds fails the case.
 - git ignores the generated files.
 - `--bench PATH`: the cases, by name, directory or name prefix; it repeats, and without one, gen regenerates every case.
 - The first failing case stops the run.
@@ -98,8 +100,9 @@ It hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the o
 - A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in its folder, with a knob per one the variant takes.
 - The log's last line, also printed per case, is its status: `match`, `wrong`, `failing`, `N/A` or `not generated`.
 - `N/A` marks a `taidl` build that stops at a second module.
+- An `xfail` case is `xfail` when `fsim-nki` rejects it with the case's expected message, `xpass` when it accepts it, and `failing` otherwise.
 - A simulation error marks its case `failing`, with the error in its log, and the run goes on.
-- The run exits nonzero unless every case is `match`.
+- The run exits nonzero unless every case is `match` or `xfail`.
 
 The status line also gives the case's worst relative error, `err`, and the fields of the last `fsim stats:` line in its log, times in seconds; [fsim/README.md](fsim/README.md) defines them:
 
@@ -117,6 +120,7 @@ The status line also gives the case's worst relative error, `err`, and the field
 ```bash
 ./scripts/bench.sh run --isa nki                              # run every case
 ./scripts/bench.sh run --isa nki --bench nkilib/rmsnorm_tkg   # run one kernel's cases
+./scripts/bench.sh run --isa nki --bench xfail                # run the memory-limit cases
 ```
 
 ## Clean

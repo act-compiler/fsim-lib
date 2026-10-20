@@ -1,6 +1,7 @@
 # Runs one fsim-nki build over each case and checks every output.
 # A run writes <case>/out/ and <case>/<log>, named by its build and knobs,
-# whose last line is its status: match, wrong, failing, N/A or not generated.
+# whose last line is its status: match, wrong, failing, N/A or not generated;
+# an xfail case is xfail or xpass.
 #   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [bench...]
 # FSIM_WALL_TIMEOUT caps each run's wall seconds, 60 by default.
 import argparse
@@ -89,12 +90,12 @@ def bins(folder, sub):
 
 
 def missing(folder, case):
-    # What generation left out, or None.
+    # What generation left out, or None; an xfail case has no golden.
     if not os.path.isfile(os.path.join(folder, 'kernel.trace')):
         return 'no kernel.trace'
     if not bins(folder, 'inputs'):
         return 'no inputs'
-    if not bins(folder, 'golden'):
+    if 'reject' not in case and not bins(folder, 'golden'):
         return 'no golden'
     return None
 
@@ -151,6 +152,15 @@ def kill_group(proc):
             os.waitpid(-proc.pid, 0)
     except ChildProcessError:
         pass  # none of the group left
+
+
+def rejection(case, cause):
+    # An xfail case's status: fsim-nki rejects it with its reject substring.
+    if not cause:
+        return 'xpass', 'fsim-nki accepted it'
+    if cause.startswith('fsim-nki: ') and case['reject'] in cause:
+        return 'xfail', cause.removeprefix('fsim-nki: ')
+    return 'failing', f'{cause}, not "{case["reject"]}"'
 
 
 def rel_error(ref, act, floor):
@@ -218,7 +228,9 @@ def run(case, timeout, compiler, variant, knobs):
             else:
                 cause = simulate(folder, log, timeout, compiler, variant, knobs)
                 spent = times(path)
-                if cause:
+                if 'reject' in case:
+                    status, cause = rejection(case, cause)
+                elif cause:
                     status = 'N/A' if cause == 'mid-run flush' else 'failing'
                 else:
                     cause, worst = compare(folder, case)
@@ -257,7 +269,7 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
     todo = suite.resolve(suite.load(), args.benches)
-    unknown = sorted({c['dtype'] for c in todo} - TOLERANCE.keys())
+    unknown = sorted({c['dtype'] for c in todo if 'reject' not in c} - TOLERANCE.keys())
     if unknown:
         sys.exit('no tolerance for dtype: ' + ' '.join(unknown))
     # Knobs the variant takes; others refused, as the simulator does.
@@ -280,4 +292,4 @@ if __name__ == '__main__':
         status, line = run(case, TIMEOUT, args.compiler, args.variant, knobs)
         statuses.append(status)
         print(f'{case["name"]:<{width}}  {line.removeprefix("status: ")}', flush=True)
-    sys.exit(0 if all(s == 'match' for s in statuses) else 1)
+    sys.exit(0 if all(s in ['match', 'xfail'] for s in statuses) else 1)
