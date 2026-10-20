@@ -11,7 +11,7 @@ Under review at a major systems conference.
 - `fsim/`: the library; `fsim/README.md` documents it.
 - `drivers/nki/`: the NKI driver; `drivers/nki/README.md` documents it.
 - `docker/`: the image and its wrappers; every command runs through them.
-- `benchmarks/nki/`: the nkilib and xfail benchmark cases and their generators under `gen/`.
+- `benchmarks/nki/`: the nki benchmark cases, a folder per source, and their generators under `gen/`.
 - `scripts/`: the host entry points over `docker/exec.sh`:
   - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
   - `build.sh`: the build of a target, `fsim` for the library or `nki` for the NKI driver at a `--compiler` and `--variant`
@@ -74,12 +74,14 @@ It builds the library from `fsim/` alongside, at the compiler and variant `--com
 
 `./scripts/bench.sh gen --isa nki` generates the nki benchmark cases in the image's nki env.
 Each `nkilib` case is one nkilib kernel at one shape, one core's tensor-parallel shard of a Llama 3 or Llama 4 model.
+Each `matmul` case is `tensor_c = tensor_a @ tensor_b` in fp16 at one `MxKxN`, its tiles transposed against the identity `tensor_id`.
 
 - Each source's `benchmarks/nki/gen/<source>/cases.py` lists its cases, and each case's folder under `benchmarks/nki/` holds a `.gitkeep`.
 - `benchmarks/nki/suite.py` checks the list against the folders before any case is generated.
 - gen compiles each case's kernel for trn2 through nki's compiler into the folder's `kernel.neff`.
 - It records the kernel through `drivers/nki/record` into `kernel.trace`, the file `fsim-nki` reads.
-- It writes the seeded inputs to `inputs/<tensor>.bin` and nkilib's torch reference output to `golden/<tensor>.bin`.
+- It writes the seeded inputs to `inputs/<tensor>.bin` and the reference output to `golden/<tensor>.bin`.
+- A `nkilib` case's reference is nkilib's torch reference, and a `matmul` case's is an fp32 matmul cast to fp16.
 - Each `xfail` case breaks one trn2 memory limit at an explicit address, and gen writes only its `kernel.trace` and inputs.
   Its gen line logs the compiler's rejection and whether `nki.simulate` runs it, and a compile that succeeds fails the case.
 - git ignores the generated files.

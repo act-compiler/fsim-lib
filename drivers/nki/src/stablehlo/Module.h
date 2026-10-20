@@ -25,7 +25,7 @@ struct Type {
 
 // The StableHLO element type.
 inline const char *mlir(Dtype dtype) {
-  static const char *const names[] = {"bf16", "f32", "i32", "ui8", "ui16", "ui32"};
+  static const char *const names[] = {"bf16", "f16", "f32", "i32", "ui8", "ui16", "ui32"};
   return names[static_cast<int>(dtype)];
 }
 

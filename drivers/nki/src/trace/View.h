@@ -11,7 +11,7 @@
 namespace nki {
 
 enum class Arena { hbm, sbuf, psum };
-enum class Dtype { bf16, f32, i32, u8, u16, u32 };
+enum class Dtype { bf16, f16, f32, i32, u8, u16, u32 };
 
 // Bytes per element.
 inline int64_t width(Dtype dtype) {
@@ -19,6 +19,7 @@ inline int64_t width(Dtype dtype) {
   case Dtype::u8:
     return 1;
   case Dtype::bf16:
+  case Dtype::f16:
   case Dtype::u16:
     return 2;
   default:
@@ -28,7 +29,7 @@ inline int64_t width(Dtype dtype) {
 
 // Whether the dtype is an integer.
 inline bool integral(Dtype dtype) {
-  return dtype != Dtype::bf16 && dtype != Dtype::f32;
+  return dtype != Dtype::bf16 && dtype != Dtype::f16 && dtype != Dtype::f32;
 }
 
 // The arena as a record spells it.

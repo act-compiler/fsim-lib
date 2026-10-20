@@ -23,13 +23,14 @@ ARENA = {
 # nki dtypes to record dtypes, and their sizes.
 DTYPE = {
     'bfloat16': 'bf16',
+    'float16': 'f16',
     'float32': 'f32',
     'int32': 'i32',
     'uint8': 'u8',
     'uint16': 'u16',
     'uint32': 'u32',
 }
-SIZE = {'bf16': 2, 'f32': 4, 'i32': 4, 'u8': 1, 'u16': 2, 'u32': 4}
+SIZE = {'bf16': 2, 'f16': 2, 'f32': 4, 'i32': 4, 'u8': 1, 'u16': 2, 'u32': 4}
 # Fields without semantics.
 DROP = {'name', 'priority', 'dge_mode'}
 

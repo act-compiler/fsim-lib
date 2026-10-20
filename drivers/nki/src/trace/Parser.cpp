@@ -93,7 +93,7 @@ Arena arena(Cursor &c) {
 Dtype dtype(Cursor &c) {
   std::string_view name = c.until("[");
   static const std::map<std::string_view, Dtype> dtypes = {
-      {"bf16", Dtype::bf16}, {"f32", Dtype::f32}, {"i32", Dtype::i32},
+      {"bf16", Dtype::bf16}, {"f16", Dtype::f16}, {"f32", Dtype::f32}, {"i32", Dtype::i32},
       {"u8", Dtype::u8},     {"u16", Dtype::u16}, {"u32", Dtype::u32}};
   auto it = dtypes.find(name);
   if (it == dtypes.end())

@@ -40,6 +40,11 @@ uint16_t bf16(float value) {
   return static_cast<uint16_t>((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16);
 }
 
+// f32 to f16 bits, round to nearest even.
+uint16_t f16(float value) {
+  return std::bit_cast<uint16_t>(static_cast<_Float16>(value));
+}
+
 // An integer wrapped to the dtype's width, as a literal.
 std::string wrapped(int64_t value, Dtype dtype) {
   switch (dtype) {
@@ -69,7 +74,7 @@ std::pair<double, double> range(Dtype dtype) {
 }
 
 bool isFloat(const std::string &elem) {
-  return elem == "f32" || elem == "bf16";
+  return elem == "f32" || elem == "bf16" || elem == "f16";
 }
 
 // A view's geometry over its arena's [P, E] element grid.
@@ -357,6 +362,8 @@ int Module::fill(Dtype dtype, const Number &value, std::vector<int64_t> dims) {
     literal = hex(std::bit_cast<uint32_t>(static_cast<float>(value.value)), 8);
   else if (dtype == Dtype::bf16)
     literal = hex(bf16(static_cast<float>(value.value)), 4);
+  else if (dtype == Dtype::f16)
+    literal = hex(f16(static_cast<float>(value.value)), 4);
   else
     literal = wrapped(value.integer ? *value.integer : static_cast<int64_t>(value.value), dtype);
   return constant({mlir(dtype), std::move(dims)}, literal);
