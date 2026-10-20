@@ -1,5 +1,7 @@
 #!/bin/bash
 # Format source files. Skips any formatter not on PATH (and says which).
+# Tree walks list files with git, so ignored files are never touched.
+# Named files are formatted directly, even when git ignores them.
 #   whole tree:   ./format/format.sh
 #   paths/globs:  ./format/format.sh src/ lib/util.py *.rs      (shell expands globs; a single file works too)
 set -euo pipefail
@@ -32,50 +34,33 @@ fmt_file() {
   return 0
 }
 
-# Directory names every tree walk skips: VCS, build output, deps, Python venv, scratch.
-PRUNE=(! -path "*/.git/*" ! -path "*/target/*" ! -path "*/node_modules/*" ! -path "*/.venv/*" ! -path "./work/*")
-# Project's own skips.
-PRUNE+=()
+# List git's unignored files under the roots matching extension regex $1.
+list_files() {
+  local f
+  git ls-files -z -co --exclude-standard -- "${roots[@]}" |
+    while IFS= read -r -d '' f; do
+      # Regular files only: skip deleted entries and submodule dirs.
+      [[ -f $f && $f =~ \.($1)$ ]] || continue
+      printf '%s\0' "$f"
+    done
+}
+
+# Format the listed files with extension regex $2 in one batch.
+fmt_batch() {
+  local label="$1" exts="$2"
+  shift 2
+  echo "[format] $label"
+  list_files "$exts" | xargs -0 -r "$@"
+}
 
 # Format all matching files under one or more directory roots.
 fmt_tree() {
   local roots=("$@")
-  if has rustfmt; then
-    echo "[format] rust"
-    find "${roots[@]}" -name "*.rs" "${PRUNE[@]}" -print0 |
-      xargs -0 -r rustfmt --config-path "$FORMAT_DIR" --config skip_children=true
-  else
-    echo "[format] skipping rustfmt: not on PATH" >&2
-  fi
-  if has ruff; then
-    echo "[format] python"
-    find "${roots[@]}" -name "*.py" "${PRUNE[@]}" -print0 |
-      xargs -0 -r ruff format -q --config "$FORMAT_DIR/pyproject.toml"
-  else
-    echo "[format] skipping ruff: not on PATH" >&2
-  fi
-  if has shfmt; then
-    echo "[format] bash"
-    find "${roots[@]}" -name "*.sh" "${PRUNE[@]}" -print0 | xargs -0 -r shfmt -w -i 2 -ci
-  else
-    echo "[format] skipping shfmt: not on PATH" >&2
-  fi
-  if has prettier; then
-    echo "[format] markdown/json/yaml"
-    find "${roots[@]}" \( -name "*.md" -o -name "*.json" -o -name "*.yaml" -o -name "*.yml" \) "${PRUNE[@]}" -print0 |
-      xargs -0 -r prettier --write --log-level warn --config "$FORMAT_DIR/.prettierrc.json"
-  else
-    echo "[format] skipping prettier: not on PATH" >&2
-  fi
-  if has clang-format; then
-    mapfile -t cpp_files < <(find "${roots[@]}" \( -name "*.cpp" -o -name "*.cc" -o -name "*.h" -o -name "*.hpp" \) "${PRUNE[@]}")
-    if [ "${#cpp_files[@]}" -gt 0 ]; then
-      echo "[format] c++"
-      clang-format --style="file:$FORMAT_DIR/.clang-format" -i "${cpp_files[@]}"
-    fi
-  else
-    echo "[format] skipping clang-format: not on PATH" >&2
-  fi
+  run_fmt rustfmt fmt_batch rust rs rustfmt --config-path "$FORMAT_DIR" --config skip_children=true
+  run_fmt ruff fmt_batch python py ruff format -q --config "$FORMAT_DIR/pyproject.toml"
+  run_fmt shfmt fmt_batch bash sh shfmt -w -i 2 -ci
+  run_fmt prettier fmt_batch markdown/json/yaml 'md|json|yaml|yml' prettier --write --log-level warn --config "$FORMAT_DIR/.prettierrc.json"
+  run_fmt clang-format fmt_batch c++ 'cpp|cc|h|hpp' clang-format --style="file:$FORMAT_DIR/.clang-format" -i
 }
 
 # Explicit paths/globs: format just those files and directories, no clean guard.
