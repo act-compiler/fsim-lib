@@ -1,11 +1,13 @@
 #!/bin/bash
 # Sets up one PJRT entry and the MLIR toolchain under fsim/third_party/.
 # An entry is the PJRT C API header of its XLA commit, pinned by sha256, and its plugin.
-# A -cpu plugin is unpacked from dist/ or else built from jax's Bazel
-# workspace at the entry's tag; a build packs the tarball into dist/.
+# A -cpu plugin is unpacked from its dist/ tarball, else a prebuilt one, else a build
+# from jax's Bazel workspace at the entry's tag; a build packs the tarball into dist/.
 # A -cuda12 plugin and its CUDA come from PyPI wheels, pinned by sha256 and kept in dist/.
 # The toolchain is MLIR and StableHLO's static libraries and headers at StableHLO's pins,
-# unpacked from dist/ or else built from source; a build packs the tarball into dist/.
+# unpacked the same way, with a build from source; a build packs the tarball into dist/.
+# A prebuilt tarball is pinned by sha256 and copied into dist/ from $FSIM_DIST_DIR
+# (default /opt/fsim/dist), else fetched from $FSIM_DIST_URL when that is set.
 #   ./fsim/setup.sh [--pjrt NAME] [--mlir]
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -16,6 +18,7 @@ usage() {
   echo "  --pjrt fetches the entry's header, then unpacks its plugin from third_party/dist/:"
   echo "  a -cpu tarball, built there first when absent, or -cuda12 wheels, fetched there first"
   echo "  --mlir unpacks the toolchain's tarball from third_party/dist/, built there first when absent"
+  echo "  an absent tarball first comes prebuilt from \$FSIM_DIST_DIR or \$FSIM_DIST_URL when pinned"
   echo "  no flag sets up the default entry and the toolchain"
 }
 
@@ -162,6 +165,15 @@ mlir_pack=mlir-$stablehlo_tag-linux-$arch
 mlir_tarball=$dist/$mlir_pack.tar.gz
 mlir_build=$PWD/$mlir/build
 
+# The prebuilt CPU tarballs, each a file and its sha256.
+prebuilt="
+pjrt-cpu-jax-0.11.2-linux-x86_64.tar.gz e7f07bbdff2e67d1b0766c1a8f5632d39af7c0fcab72586de4928c25a5816692
+mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
+"
+# Where prebuilt tarballs come from: a directory, then a url.
+dist_dir=${FSIM_DIST_DIR:-/opt/fsim/dist}
+dist_url=${FSIM_DIST_URL:-}
+
 # True when the file exists with this sha256.
 matches() { [ -f "$1" ] && echo "$2  $1" | sha256sum -c --status; }
 
@@ -260,6 +272,29 @@ unpack_wheels() {
   echo "$pins" >"$out/lib/wheels.txt"
 }
 
+# Put a pinned prebuilt tarball and its sidecar into dist/, if one is offered.
+fetch_prebuilt() {
+  local file=$1 sha
+  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
+  [ -n "$sha" ] || return 0
+  mkdir -p "$dist"
+  if [ -f "$dist_dir/$file" ]; then
+    matches "$dist_dir/$file" "$sha" || {
+      echo "sha256 mismatch: $dist_dir/$file is not the pinned $sha" >&2
+      exit 1
+    }
+    echo "prebuilt: copying $dist_dir/$file"
+    cp "$dist_dir/$file" "$dist/$file.part"
+    mv "$dist/$file.part" "$dist/$file"
+  elif [ -n "$dist_url" ]; then
+    echo "prebuilt: fetching $dist_url/$file"
+    fetch "$dist/$file" "$dist_url/$file" "$sha"
+  else
+    return 0
+  fi
+  echo "$sha  $file" >"$dist/$file.sha256"
+}
+
 # Fail unless a dist/ tarball matches its sidecar.
 verify_tarball() {
   (cd "$dist" && sha256sum -c --status "$1.sha256") || {
@@ -283,7 +318,8 @@ setup_pjrt() {
     return
   fi
 
-  # The plugin, built only when dist/ lacks its tarball.
+  # The plugin, prebuilt or built only when dist/ lacks its tarball.
+  [ -f "$tarball" ] || fetch_prebuilt "$pack.tar.gz"
   [ -f "$tarball" ] || build_plugin
   verify_tarball "$pack.tar.gz"
 
@@ -359,8 +395,9 @@ build_mlir() {
   rm -rf "$mlir_build"
 }
 
-# Set up the toolchain, built only when dist/ lacks its tarball.
+# Set up the toolchain, prebuilt or built only when dist/ lacks its tarball.
 setup_mlir() {
+  [ -f "$mlir_tarball" ] || fetch_prebuilt "$mlir_pack.tar.gz"
   [ -f "$mlir_tarball" ] || build_mlir
   verify_tarball "$mlir_pack.tar.gz"
 
