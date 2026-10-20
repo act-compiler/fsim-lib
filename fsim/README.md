@@ -135,9 +135,27 @@ A failed phase fails the module's compile with the phase's diagnostics.
 | `--pjrt NAME` | one of the four entries above, default `jax-0.11.2-cpu`           |
 | `--mlir`      | the MLIR toolchain at StableHLO `v1.20.0` and that tag's LLVM pin |
 
-- A `-cpu` entry unpacks its plugin from its `dist/` tarball, and builds it for 1-2 h when the tarball is absent.
+- A `-cpu` entry unpacks its plugin from its tarball, and builds it for 1-2 h when no tarball is found.
 - A `-cuda12` entry fetches its plugin and CUDA as PyPI wheels pinned by sha256 into `dist/`, then unpacks them.
-- The toolchain unpacks from its `dist/` tarball, and builds from source for about 10 min when the tarball is absent.
+- The toolchain unpacks from its tarball, and builds from source for about 10 min when no tarball is found.
+- A part already unpacked from the same tarball is skipped.
+
+A `-cpu` plugin or the toolchain looks for its tarball in this order:
+
+1. `dist/`
+2. `$FSIM_DIST_DIR`, copied into `dist/`
+3. `$FSIM_DIST_URL/<tarball>`, fetched with curl into `dist/`
+4. a build from source, packed into `dist/`
+
+| variable        | default          | what it sets                                      |
+| --------------- | ---------------- | ------------------------------------------------- |
+| `FSIM_DIST_DIR` | `/opt/fsim/dist` | a directory of prebuilt tarballs, as an image has |
+| `FSIM_DIST_URL` | unset            | a base url of prebuilt tarballs, as a release has |
+
+- Steps 2 and 3 take only a tarball whose sha256 `setup.sh` pins, and skip an unpinned one.
+- A tarball there whose sha256 differs from its pin fails the setup, never falling through to the next step.
+- A failed download from `$FSIM_DIST_URL` fails the setup too, never falling through to the source build.
+- `setup.sh` pins the `jax-0.11.2-cpu` plugin and the toolchain on x86_64.
 
 ```bash
 ./scripts/setup.sh          # set up the default entry and the toolchain

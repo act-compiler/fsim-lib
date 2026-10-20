@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Change to script directory
 cd "$(dirname "$0")"
+source ./fsim-env.env
 
 # Detect architecture
 case "$(uname -m)" in
@@ -16,12 +17,21 @@ esac
 DOCKERFILE="Dockerfile"
 IMAGE_NAME="fsim-lib:latest-${ARCH}"
 BASE_OS="ubuntu:24.04"
+# The env image to pull, and the one --env builds
+ENV_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_TAG}-${ARCH}"
+ENV_BUILD_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_BUILD_TAG}-${ARCH}"
+# The CPU tarballs the env bakes in, from the library's dist/
+DIST_DIR="../fsim/third_party/dist"
 
 usage() {
   cat <<EOF
-Usage: $0 [-r|--rebuild] [-f|--force] [-y|--no-confirm] [-h|--help]
+Usage: $0 [-e|--env] [-r|--rebuild] [-f|--force] [-y|--no-confirm] [-h|--help]
+
+Builds ${IMAGE_NAME} on ${ENV_IMAGE_NAME},
+pulled, or built here when the pull fails.
 
 Options:
+  -e, --env         Build only the env image ${ENV_BUILD_IMAGE_NAME}.
   -r, --rebuild     Remove old image (and optionally containers with --force) and rebuild.
   -f, --force       Remove containers referencing ${IMAGE_NAME} (only useful with --rebuild).
   -y, --no-confirm  Do not prompt for confirmation when --force is used.
@@ -30,11 +40,16 @@ EOF
 }
 
 # Parse args
+ENV_ONLY=0
 REBUILD=0
 FORCE=0
 NO_CONFIRM=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --env)
+      ENV_ONLY=1
+      shift
+      ;;
     --rebuild)
       REBUILD=1
       shift
@@ -57,6 +72,7 @@ while [ $# -gt 0 ]; do
       for ((i = 0; i < ${#flags}; i++)); do
         ch="${flags:i:1}"
         case "$ch" in
+          e) ENV_ONLY=1 ;;
           r) REBUILD=1 ;;
           f) FORCE=1 ;;
           y) NO_CONFIRM=1 ;;
@@ -82,6 +98,33 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# The env alone is the image to check and build
+if [ "${ENV_ONLY}" -eq 1 ]; then
+  IMAGE_NAME="${ENV_BUILD_IMAGE_NAME}"
+fi
+
+# The tarballs' names, from the versions the env's tag names
+[[ "${FSIM_ENV_BUILD_TAG}" =~ -jax([^-]+)-shlo([^-]+)- ]] || {
+  echo "Error: FSIM_ENV_BUILD_TAG names no -jax<version>-shlo<version>-: ${FSIM_ENV_BUILD_TAG}"
+  exit 1
+}
+PJRT_TARBALL="pjrt-cpu-jax-${BASH_REMATCH[1]}-linux-$(uname -m).tar.gz"
+MLIR_TARBALL="mlir-v${BASH_REMATCH[2]}-linux-$(uname -m).tar.gz"
+MISSING=()
+for f in "${PJRT_TARBALL}" "${MLIR_TARBALL}"; do
+  [ -f "${DIST_DIR}/${f}" ] || MISSING+=("${f}")
+done
+# A release env holds both tarballs
+if [ "${ENV_ONLY}" -eq 1 ] && [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh builds them. Aborting."
+  exit 1
+fi
+# An env without the dist context gets an empty one
+if [ ! -d "${DIST_DIR}" ]; then
+  DIST_DIR="$(mktemp -d)"
+  trap 'rmdir "${DIST_DIR}"' EXIT
+fi
 
 # Does an old image exist?
 if docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
@@ -140,10 +183,32 @@ if [ "${IMAGE_EXISTS}" -eq 1 ] && [ "${REBUILD}" -eq 1 ]; then
   docker image rm "${IMAGE_NAME}"
 fi
 
-# Build
-echo
-echo "Building ${IMAGE_NAME}..."
-docker build -f "${DOCKERFILE}" -t "${IMAGE_NAME}" --build-arg OS="${BASE_OS}" .
+# Build one stage of the Dockerfile as an image, with no provenance or SBOM attestation to push
+build_stage() {
+  echo
+  echo "Building $2..."
+  docker build -f "${DOCKERFILE}" --target "$1" -t "$2" --provenance=false --sbom=false --build-arg OS="${BASE_OS}" \
+    --build-arg FSIM_ENV_IMAGE="${ENV_IMAGE_NAME}" --build-arg FSIM_ENV_TAG="${FSIM_ENV_BUILD_TAG}" \
+    --build-arg PJRT_TARBALL="${PJRT_TARBALL}" --build-arg MLIR_TARBALL="${MLIR_TARBALL}" \
+    --build-context dist="${DIST_DIR}" .
+}
+
+# The env alone, or the local stage on it
+if [ "${ENV_ONLY}" -eq 1 ]; then
+  build_stage env "${IMAGE_NAME}"
+else
+  # The env: local, pulled, else built if it is the Dockerfile's own
+  if ! docker image inspect "${ENV_IMAGE_NAME}" >/dev/null 2>&1 && ! docker pull "${ENV_IMAGE_NAME}"; then
+    if [ "${FSIM_ENV_TAG}" != "${FSIM_ENV_BUILD_TAG}" ]; then
+      echo "Error: cannot pull ${ENV_IMAGE_NAME}, and the Dockerfile defines ${FSIM_ENV_BUILD_TAG}. Aborting."
+      exit 1
+    fi
+    echo "Cannot pull ${ENV_IMAGE_NAME}: building it here."
+    [ "${#MISSING[@]}" -eq 0 ] || echo "Warning: fsim/third_party/dist/ lacks ${MISSING[*]}, so the env holds no copy of them."
+    build_stage env "${ENV_IMAGE_NAME}"
+  fi
+  build_stage local "${IMAGE_NAME}"
+fi
 
 # Prune dangling images
 echo "Pruning dangling images..."
