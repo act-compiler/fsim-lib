@@ -7,10 +7,12 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -68,6 +70,15 @@ std::string signature(PJRT_Buffer_Type type, const int64_t *dims, size_t num_dim
   return text + "]";
 }
 
+// Ms as seconds to 3 decimals, '-' when unknown.
+std::string seconds(std::optional<double> ms) {
+  if (!ms)
+    return "-";
+  char text[32];
+  std::snprintf(text, sizeof text, "%.3f", *ms / 1000);
+  return text;
+}
+
 #ifdef FSIM_COMPILER_CUSTOM
 // Runs the pass stage; the text becomes its artifact.
 void passes(std::string &text) {
@@ -90,6 +101,13 @@ struct Pipeline::Impl {
   std::vector<PJRT_Buffer *> buffers;
   const std::string options = compile_options();
   const uint32_t trigger;
+
+  // The run's clock and marks, on the caller's thread.
+  Clock::time_point begin = Clock::now();
+  std::optional<double> tracing_ms;
+  std::optional<size_t> trace_length;
+  bool synced = false;  // a sync() has run
+  bool settled = false; // the last sync() returned, no submit since
 
   // Guarded by mutex.
   mutable std::mutex mutex;
@@ -423,6 +441,7 @@ bool Pipeline::soft_trigger([[maybe_unused]] size_t ops) const {
 }
 
 void Pipeline::submit(std::string module) {
+  impl_->settled = false;
   std::lock_guard lock(impl_->mutex);
   if (impl_->error)
     std::rethrow_exception(impl_->error);
@@ -450,6 +469,7 @@ void Pipeline::submit(std::string module) {
 }
 
 void Pipeline::sync() {
+  impl_->synced = true;
   {
     std::unique_lock lock(impl_->mutex);
 #ifdef FSIM_VARIANT_OVERLAP
@@ -471,11 +491,51 @@ void Pipeline::sync() {
     rt.check(rt.api->PJRT_Buffer_ToHostBuffer(&args), "PJRT_Buffer_ToHostBuffer");
     rt.await(args.event);
   }
+  impl_->settled = true;
 }
 
 Stats Pipeline::stats() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->stats;
+}
+
+void Pipeline::begin_run() {
+  impl_->begin = Clock::now();
+}
+
+void Pipeline::end_trace(size_t trace_length) {
+  impl_->tracing_ms = Impl::ms_since(impl_->begin);
+  impl_->trace_length = trace_length;
+}
+
+void Pipeline::summary(std::ostream &out) const {
+  // Wall ends here, once a sync has run.
+  std::optional<double> wall, simulation, compile, overhead, tracing_overhead;
+  if (impl_->synced)
+    wall = Impl::ms_since(impl_->begin);
+  // The modules' split, after a clean sync of at least one.
+  std::string modules = "-";
+  Stats run = stats();
+  if (impl_->settled && !run.modules.empty()) {
+    simulation = compile = 0.0;
+    for (const ModuleStats &module : run.modules) {
+      *simulation += module.execute_ms;
+      *compile += module.compile_ms;
+    }
+    // Overlap's executor waits on compile; elsewhere compile runs in submit.
+    if (run.waits)
+      compile = run.waits->compile_ms;
+    overhead = *wall - *simulation;
+    tracing_overhead = *overhead - *compile;
+    modules = std::to_string(run.modules.size());
+  }
+  std::string trace = impl_->trace_length ? std::to_string(*impl_->trace_length) : "-";
+  out << "fsim stats: tracing=" << seconds(impl_->tracing_ms) << " overhead=" << seconds(overhead)
+      << " simulation=" << seconds(simulation) << " tracing_overhead=" << seconds(tracing_overhead)
+      << " compile_overhead=" << seconds(compile) << " wall=" << seconds(wall) << " trace=" << trace
+      << " modules=" << modules << "\n";
+  // A killed run keeps the line.
+  out.flush();
 }
 
 } // namespace fsim

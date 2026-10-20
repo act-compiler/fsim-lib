@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
 #include <memory>
 #include <optional>
 #include <string>
@@ -68,6 +69,13 @@ public:
   void sync();
   // A snapshot of the stats; complete after sync().
   Stats stats() const;
+
+  // Restarts the run's clock, started at construction.
+  void begin_run();
+  // Ends the driver's trace of trace_length instructions.
+  void end_trace(size_t trace_length);
+  // Prints the run's summary line so far, '-' for a value not yet known.
+  void summary(std::ostream &out) const;
 
 private:
   struct Impl;

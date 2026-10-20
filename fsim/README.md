@@ -75,6 +75,32 @@ In `overlap` its `waits` sums the executor's idle ms, each wait counted once it 
 - `tracing_ms`: idle while the next module is not yet submitted, for diagnosis only
 - `compile_ms`: idle while the next module is submitted but not yet compiled, the run's compile overhead
 
+The pipeline clocks the run from its construction, or from the last `Pipeline::begin_run()`:
+
+- `Pipeline::end_trace(n)` ends the driver's trace of `n` instructions.
+- `Pipeline::summary(out)` prints the run's summary so far as one line, and flushes it.
+- A driver prints the summary at its trace's end, so a run killed in `sync` keeps it, and again after its last `sync`.
+
+```text
+fsim stats: tracing=<s> overhead=<s> simulation=<s> tracing_overhead=<s> compile_overhead=<s> wall=<s> trace=<n> modules=<n>
+```
+
+Times are seconds to 3 decimals, and a value not yet known prints `-`:
+
+| value              | what it is                                                      | known after               |
+| ------------------ | --------------------------------------------------------------- | ------------------------- |
+| `tracing`          | the clock at `end_trace`                                        | `end_trace`               |
+| `overhead`         | `wall` minus `simulation`                                       | a clean `sync` of modules |
+| `simulation`       | the modules' execute time                                       | a clean `sync` of modules |
+| `tracing_overhead` | `overhead` minus `compile_overhead`                             | a clean `sync` of modules |
+| `compile_overhead` | `waits.compile_ms` in `overlap`, else the modules' compile time | a clean `sync` of modules |
+| `wall`             | the clock at `summary`                                          | any `sync`, failed or not |
+| `trace`            | `end_trace`'s instruction count                                 | `end_trace`               |
+| `modules`          | the submitted module count                                      | a clean `sync` of modules |
+
+- A clean `sync` of modules returned, with at least one module submitted and none since.
+- Outside `overlap`, `submit` compiles and runs its module, so a submit inside the trace counts in `tracing`.
+
 The pass stage is `fsim_passes`, a shared object with only `passes.h`'s C entry visible, so its static MLIR never meets a driver's LLVM.
 It takes a module's text and returns a versioned StableHLO artifact, which PJRT compiles in place of the text:
 
