@@ -12,6 +12,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# The pins are x86_64 only.
+[ "$(uname -m)" = x86_64 ] || {
+  echo "setup.sh: x86_64 only, not $(uname -m)" >&2
+  exit 1
+}
+
 usage() {
   echo "usage: $0 [--pjrt NAME] [--mlir]"
   echo "  NAME: jax-0.11.2-cpu (default), jax-0.4.33-cpu, jax-0.11.2-cuda12 or jax-0.4.33-cuda12"
@@ -55,28 +61,21 @@ done
 [ -n "$want_pjrt$want_mlir" ] || want_pjrt=1 want_mlir=1
 
 # The pins per jax release: tag commit, XLA commit, header, CPU build flags.
-arch=$(uname -m)
 case "$name" in
   jax-0.11.2-cpu | jax-0.11.2-cuda12)
     jax=32544801e26115ac1794926d027148abf3baf009
     xla=91888df6ce85102c30220e41d952065925e10886
     header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
-    case "$arch" in
-      x86_64) flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false) ;;
-      aarch64) flags=(--config=ci_linux_aarch64 --config=public_cache) ;;
-    esac
+    flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false)
     ;;
   jax-0.4.33-cpu | jax-0.4.33-cuda12)
     jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
     xla=720b2c53346660e95abbed7cf3309a8b85e979f9
     header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
-    # The image's clang, as build.py --use_clang sets it.
-    clang=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
-      --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions)
-    case "$arch" in
-      x86_64) flags=("${clang[@]}" --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone) ;;
-      aarch64) flags=("${clang[@]}" --strategy=Genrule=standalone) ;;
-    esac
+    # The image's clang, as build.py --use_clang sets it, then the CPU flags.
+    flags=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
+      --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions
+      --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone)
     ;;
   *)
     echo "unknown PJRT entry: $name" >&2
@@ -88,21 +87,8 @@ esac
 release=${name%-*}
 tag=jax-v${release#jax-}
 
-# The bazelisk pin per arch.
-case "$arch" in
-  x86_64)
-    bazelisk=bazelisk-linux-amd64
-    bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
-    ;;
-  aarch64)
-    bazelisk=bazelisk-linux-arm64
-    bazelisk_sha=e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010
-    ;;
-  *)
-    echo "no pinned PJRT build for $arch" >&2
-    exit 1
-    ;;
-esac
+# The bazelisk pin.
+bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
 
 # The layout: entry, dist tarball, build scratch.
 out=third_party/pjrt/$name
@@ -111,45 +97,31 @@ case "$name" in
   *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
   *) so=xla_cuda_plugin.so ;;
 esac
-pack=pjrt-cpu-$release-linux-$arch
+pack=pjrt-cpu-$release-linux-x86_64
 dist=third_party/dist
 tarball=$dist/$pack.tar.gz
 build=$PWD/third_party/pjrt/build/$name
 
-# The GPU wheels, each a release or all, an arch, a file and its sha256:
+# The GPU wheels, each a release or all, a file and its sha256:
 # jax's plugin, then the CUDA of the with-cuda extra of jax-cuda12-plugin.
 wheels="
-jax-0.11.2 x86_64 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_x86_64.whl 2133b3afc63307c016ae4980f166b2b3de199759363ead74f7d550eaae953463
-jax-0.4.33 x86_64 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_x86_64.whl b43f199ec27fd9b3bb79b34ed297894ad50bb7a6eab62012baaa9ea6607b22de
-jax-0.11.2 x86_64 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4
-jax-0.11.2 x86_64 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl b2e5760d6158aefe7bb74348d5128bb1b46a7dd1fd4b7b1e6fe55b4b07888f70
-all x86_64 nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702
-all x86_64 nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_x86_64.whl 096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f
-all x86_64 nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0
-all x86_64 nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3
-all x86_64 nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_x86_64.whl 0a4aa3a7d2264256506c6857fc41fc0c499982f78d70195b1cfcc9055c1957cd
-all x86_64 nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
-all x86_64 nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_x86_64.whl 15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88
-all x86_64 nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78
-all x86_64 nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_x86_64.whl bb94b2348e4861d5e8aa00b36c3d12d9bdf9c6369b82cbb723de0b582280a21c
-all x86_64 nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9
-jax-0.11.2 aarch64 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_aarch64.whl f36247d40973b20acf3c69dac7c9c720daaa4096a809b3e8fd70292be617cdeb
-jax-0.4.33 aarch64 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_aarch64.whl 6a9945a8b58fabd040a06850f5ca6bcf94b9ec45b8248afb20c7f2eb809e2cea
-jax-0.11.2 aarch64 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 096d4de6bda726415dfaf3198d4f5c522b8e70139c97feef5cd2ca6d4cd9cead
-jax-0.11.2 aarch64 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 313ba41c8aacf03f9524ca83ddb2c62e7b3d82f71af815a35e3739f3d64452b2
-all aarch64 nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_aarch64.whl 5572131a59c3eebeeb1c4c8144f772d49372c20124916e072a0e3fc30df421d5
-all aarch64 nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_aarch64.whl 791853b030602c6a11d08b5578edfb957cadea06e9d3b26adbf8d036135a4afe
-all aarch64 nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 44e1eca4d08926193a558d2434b1bf83d57b4d5743e0c431c0c83d51da1df62b
-all aarch64 nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4
-all aarch64 nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_aarch64.whl 5bc22243563107ea06aa60f9116ad800063d5f4617cc75bc6670d5db78d9f336
-all aarch64 nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf
-all aarch64 nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_aarch64.whl 62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2
-all aarch64 nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83
-all aarch64 nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_aarch64.whl 061af42ae1044816820e16b872075e243d1ac0656f51860fbc8e106c257aa83a
-all aarch64 nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca
+jax-0.11.2 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_x86_64.whl 2133b3afc63307c016ae4980f166b2b3de199759363ead74f7d550eaae953463
+jax-0.4.33 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_x86_64.whl b43f199ec27fd9b3bb79b34ed297894ad50bb7a6eab62012baaa9ea6607b22de
+jax-0.11.2 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4
+jax-0.11.2 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl b2e5760d6158aefe7bb74348d5128bb1b46a7dd1fd4b7b1e6fe55b4b07888f70
+all nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702
+all nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_x86_64.whl 096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f
+all nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0
+all nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3
+all nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_x86_64.whl 0a4aa3a7d2264256506c6857fc41fc0c499982f78d70195b1cfcc9055c1957cd
+all nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
+all nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_x86_64.whl 15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88
+all nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78
+all nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_x86_64.whl bb94b2348e4861d5e8aa00b36c3d12d9bdf9c6369b82cbb723de0b582280a21c
+all nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9
 "
 # This entry's wheels, a file and a sha256 per line.
-pins=$(awk -v r="$release" -v a="$arch" '($1 == r || $1 == "all") && $2 == a { print $3, $4 }' <<<"$wheels")
+pins=$(awk -v r="$release" '$1 == r || $1 == "all" { print $2, $3 }' <<<"$wheels")
 
 # The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
 stablehlo_tag=v1.20.0
@@ -161,7 +133,7 @@ mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms ML
 
 # The toolchain layout: install, dist tarball, build scratch.
 mlir=third_party/mlir
-mlir_pack=mlir-$stablehlo_tag-linux-$arch
+mlir_pack=mlir-$stablehlo_tag-linux-x86_64
 mlir_tarball=$dist/$mlir_pack.tar.gz
 mlir_build=$PWD/$mlir/build
 
@@ -208,7 +180,7 @@ build_plugin() {
   export HOME=$build/home XDG_CACHE_HOME=$build/cache BAZELISK_HOME=$build/cache/bazelisk
   mkdir -p "$build/bin" "$HOME"
   [ -x "$build/bin/bazelisk" ] || {
-    fetch "$build/bin/bazelisk" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/$bazelisk" "$bazelisk_sha"
+    fetch "$build/bin/bazelisk" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64" "$bazelisk_sha"
     chmod +x "$build/bin/bazelisk"
   }
 
