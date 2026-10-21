@@ -61,6 +61,19 @@ fi
 # The layout shared by every part.
 dist=third_party/dist
 
+# The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
+stablehlo_tag=v1.20.0
+stablehlo=639335932274930617d9724fb25ec9f2f52c5e40
+llvm=ab547095ead5464dc024d66264d9b8a987f429f3
+# The toolchain's targets, built with their link closure.
+mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms MLIRFuncDialect MLIRPass MLIRSupport
+  StablehloOps StablehloPasses StablehloOptimizationPasses StablehloSerialization StablehloPortableApi VhloOps Version)
+
+# The toolchain layout: install, dist tarball, build scratch.
+mlir=third_party/mlir
+mlir_pack=mlir-$stablehlo_tag-linux-x86_64
+mlir_build=$PWD/$mlir/build
+
 # The bazelisk pin.
 bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
 
@@ -122,24 +135,11 @@ select_entry() {
   pins=$(awk -v r="$release" '$1 == r || $1 == "all" { print $2, $3 }' <<<"$wheels")
 }
 
-# The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
-stablehlo_tag=v1.20.0
-stablehlo=639335932274930617d9724fb25ec9f2f52c5e40
-llvm=ab547095ead5464dc024d66264d9b8a987f429f3
-# The toolchain's targets, built with their link closure.
-mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms MLIRFuncDialect MLIRPass MLIRSupport
-  StablehloOps StablehloPasses StablehloOptimizationPasses StablehloSerialization StablehloPortableApi VhloOps Version)
-
-# The toolchain layout: install, dist tarball, build scratch.
-mlir=third_party/mlir
-mlir_pack=mlir-$stablehlo_tag-linux-x86_64
-mlir_build=$PWD/$mlir/build
-
 # The prebuilt CPU tarballs, each a file and its sha256.
 prebuilt="
+mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 pjrt-cpu-jax-0.11.2-linux-x86_64.tar.gz e7f07bbdff2e67d1b0766c1a8f5632d39af7c0fcab72586de4928c25a5816692
 pjrt-cpu-jax-0.4.33-linux-x86_64.tar.gz 873129acd6df14c07f1e2b2ab0f0e616a763f00a38a7bfc56b918563e503c1a4
-mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 "
 # The env image's copy of them.
 image_dist=/opt/fsim/dist
@@ -155,6 +155,118 @@ fetch() {
     exit 1
   }
   mv "$1.part" "$1"
+}
+
+# Move a dist/ file's .part in, after its sidecar.
+seal() {
+  echo "$2  $1" >"$dist/$1.sha256"
+  mv "$dist/$1.part" "$dist/$1"
+}
+
+# Pack a build's directory into a dist/ tarball.
+pack_dir() {
+  mkdir -p "$dist"
+  tar -czf "$dist/$2.tar.gz.part" -C "$1" "$2"
+  seal "$2.tar.gz" "$(sha256sum <"$dist/$2.tar.gz.part" | cut -c1-64)"
+}
+
+# Put a tarball into dist/: kept, else the image's pinned copy, else a build.
+provide() {
+  local file=$1.tar.gz sha
+  # A kept tarball holds to its sidecar.
+  if [ -f "$dist/$file" ]; then
+    (cd "$dist" && sha256sum -c --status "$file.sha256") || {
+      echo "sha256 mismatch: $dist/$file" >&2
+      exit 1
+    }
+    return
+  fi
+  # The image's copy, when pinned, holds to its pin.
+  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
+  if [ -n "$sha" ] && [ -f "$image_dist/$file" ]; then
+    matches "$image_dist/$file" "$sha" || {
+      echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
+      exit 1
+    }
+    echo "prebuilt: copying $image_dist/$file"
+    mkdir -p "$dist"
+    cp "$image_dist/$file" "$dist/$file.part"
+    seal "$file" "$sha"
+    return
+  fi
+  "$2"
+}
+
+# Unpack a dist/ tarball into a dir, skipped when the dir came from it.
+unpack() {
+  local tarball=$dist/$1.tar.gz
+  cmp -s "$tarball.sha256" "$2/$1.tar.gz.sha256" && return
+  rm -rf "$2"
+  mkdir -p "$2"
+  tar -xzf "$tarball" --no-same-owner --strip-components="$3" -C "$2"
+  cp "$tarball.sha256" "$2/"
+}
+
+# Fetch one commit of a GitHub repo, refetched unless at the pin.
+fetch_commit() {
+  local git=(git -c safe.directory="$2" -C "$2")
+  [ "$("${git[@]}" rev-parse -q --verify HEAD 2>/dev/null)" = "$3" ] || {
+    rm -rf "$2"
+    git init -q "$2"
+    "${git[@]}" fetch -q --depth 1 "https://github.com/$1.git" "$3"
+    "${git[@]}" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  }
+}
+
+# Copy the headers of source dirs under a root, keeping their paths.
+copy_headers() {
+  local root=$1 to=$2
+  shift 2
+  (cd "$root" && find "$@" \( -name '*.h' -o -name '*.inc' -o -name '*.def' \) -exec cp --parents -t "$to" {} +)
+}
+
+# Build the toolchain from source, then pack it into dist/.
+build_mlir() {
+  local src=$mlir_build/src bin=$mlir_build/llvm
+  local to=$mlir_build/$mlir_pack
+  fetch_commit llvm/llvm-project "$src/llvm" "$llvm"
+  fetch_commit openxla/stablehlo "$src/stablehlo" "$stablehlo"
+
+  # LLVM and MLIR with StableHLO as an external project, no tools or tests.
+  echo "mlir: building StableHLO $stablehlo_tag, about 10 min"
+  cmake -G Ninja -S "$src/llvm/llvm" -B "$bin" -Wno-dev \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DLLVM_USE_LINKER=/usr/bin/ld.lld-18 \
+    -DLLVM_ENABLE_PROJECTS=mlir -DLLVM_TARGETS_TO_BUILD=host -DLLVM_ENABLE_ASSERTIONS=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_BUILD_TOOLS=OFF \
+    -DLLVM_ENABLE_BINDINGS=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_LIBXML2=OFF \
+    -DMLIR_INCLUDE_TESTS=OFF -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+    -DLLVM_EXTERNAL_PROJECTS=stablehlo -DLLVM_EXTERNAL_STABLEHLO_SOURCE_DIR="$src/stablehlo" \
+    -DSTABLEHLO_ENABLE_BINDINGS_PYTHON=OFF -DMLIR_INCLUDE_DIRS="$src/llvm/mlir/include"
+  ninja -C "$bin" -j"$(nproc)" "${mlir_targets[@]}"
+
+  # The source headers, then the generated ones.
+  rm -rf "$to"
+  mkdir -p "$to/include" "$to/lib"
+  copy_headers "$src/llvm/llvm/include" "$to/include" llvm llvm-c
+  copy_headers "$src/llvm/mlir/include" "$to/include" mlir mlir-c
+  copy_headers "$src/stablehlo" "$to/include" stablehlo
+  copy_headers "$bin/include" "$to/include" llvm
+  copy_headers "$bin/tools/mlir/include" "$to/include" mlir
+  copy_headers "$bin/tools/stablehlo" "$to/include" stablehlo
+  # The static libraries, less the build's own tablegen.
+  find "$bin/lib" -maxdepth 1 -name '*.a' ! -name '*TableGen*' ! -name '*Tblgen*' -exec cp -t "$to/lib" {} +
+  printf 'stablehlo %s %s\nllvm %s\n' "$stablehlo_tag" "$stablehlo" "$llvm" >"$to/pins.txt"
+
+  # The tarball, then no build state.
+  pack_dir "$mlir_build" "$mlir_pack"
+  rm -rf "$mlir_build"
+}
+
+# Set up the toolchain from its tarball.
+setup_mlir() {
+  provide "$mlir_pack" build_mlir
+  unpack "$mlir_pack" "$mlir" 1
+  echo "mlir: $mlir/include $mlir/lib"
 }
 
 # Build the plugin from source, then pack it into dist/.
@@ -231,56 +343,6 @@ unpack_wheels() {
   echo "$pins" >"$out/lib/wheels.txt"
 }
 
-# Move a dist/ file's .part in, after its sidecar.
-seal() {
-  echo "$2  $1" >"$dist/$1.sha256"
-  mv "$dist/$1.part" "$dist/$1"
-}
-
-# Pack a build's directory into a dist/ tarball.
-pack_dir() {
-  mkdir -p "$dist"
-  tar -czf "$dist/$2.tar.gz.part" -C "$1" "$2"
-  seal "$2.tar.gz" "$(sha256sum <"$dist/$2.tar.gz.part" | cut -c1-64)"
-}
-
-# Put a tarball into dist/: kept, else the image's pinned copy, else a build.
-provide() {
-  local file=$1.tar.gz sha
-  # A kept tarball holds to its sidecar.
-  if [ -f "$dist/$file" ]; then
-    (cd "$dist" && sha256sum -c --status "$file.sha256") || {
-      echo "sha256 mismatch: $dist/$file" >&2
-      exit 1
-    }
-    return
-  fi
-  # The image's copy, when pinned, holds to its pin.
-  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
-  if [ -n "$sha" ] && [ -f "$image_dist/$file" ]; then
-    matches "$image_dist/$file" "$sha" || {
-      echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
-      exit 1
-    }
-    echo "prebuilt: copying $image_dist/$file"
-    mkdir -p "$dist"
-    cp "$image_dist/$file" "$dist/$file.part"
-    seal "$file" "$sha"
-    return
-  fi
-  "$2"
-}
-
-# Unpack a dist/ tarball into a dir, skipped when the dir came from it.
-unpack() {
-  local tarball=$dist/$1.tar.gz
-  cmp -s "$tarball.sha256" "$2/$1.tar.gz.sha256" && return
-  rm -rf "$2"
-  mkdir -p "$2"
-  tar -xzf "$tarball" --no-same-owner --strip-components="$3" -C "$2"
-  cp "$tarball.sha256" "$2/"
-}
-
 # Set up the entry: its header, then its plugin.
 setup_pjrt() {
   # The header, skipped when already pinned.
@@ -297,68 +359,6 @@ setup_pjrt() {
     unpack "$pack" "$out/lib" 2
   fi
   echo "pjrt: $header $out/lib/$so"
-}
-
-# Fetch one commit of a GitHub repo, refetched unless at the pin.
-fetch_commit() {
-  local git=(git -c safe.directory="$2" -C "$2")
-  [ "$("${git[@]}" rev-parse -q --verify HEAD 2>/dev/null)" = "$3" ] || {
-    rm -rf "$2"
-    git init -q "$2"
-    "${git[@]}" fetch -q --depth 1 "https://github.com/$1.git" "$3"
-    "${git[@]}" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  }
-}
-
-# Copy the headers of source dirs under a root, keeping their paths.
-copy_headers() {
-  local root=$1 to=$2
-  shift 2
-  (cd "$root" && find "$@" \( -name '*.h' -o -name '*.inc' -o -name '*.def' \) -exec cp --parents -t "$to" {} +)
-}
-
-# Build the toolchain from source, then pack it into dist/.
-build_mlir() {
-  local src=$mlir_build/src bin=$mlir_build/llvm
-  local to=$mlir_build/$mlir_pack
-  fetch_commit llvm/llvm-project "$src/llvm" "$llvm"
-  fetch_commit openxla/stablehlo "$src/stablehlo" "$stablehlo"
-
-  # LLVM and MLIR with StableHLO as an external project, no tools or tests.
-  echo "mlir: building StableHLO $stablehlo_tag, about 10 min"
-  cmake -G Ninja -S "$src/llvm/llvm" -B "$bin" -Wno-dev \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DLLVM_USE_LINKER=/usr/bin/ld.lld-18 \
-    -DLLVM_ENABLE_PROJECTS=mlir -DLLVM_TARGETS_TO_BUILD=host -DLLVM_ENABLE_ASSERTIONS=OFF \
-    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_BUILD_TOOLS=OFF \
-    -DLLVM_ENABLE_BINDINGS=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_LIBXML2=OFF \
-    -DMLIR_INCLUDE_TESTS=OFF -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
-    -DLLVM_EXTERNAL_PROJECTS=stablehlo -DLLVM_EXTERNAL_STABLEHLO_SOURCE_DIR="$src/stablehlo" \
-    -DSTABLEHLO_ENABLE_BINDINGS_PYTHON=OFF -DMLIR_INCLUDE_DIRS="$src/llvm/mlir/include"
-  ninja -C "$bin" -j"$(nproc)" "${mlir_targets[@]}"
-
-  # The source headers, then the generated ones.
-  rm -rf "$to"
-  mkdir -p "$to/include" "$to/lib"
-  copy_headers "$src/llvm/llvm/include" "$to/include" llvm llvm-c
-  copy_headers "$src/llvm/mlir/include" "$to/include" mlir mlir-c
-  copy_headers "$src/stablehlo" "$to/include" stablehlo
-  copy_headers "$bin/include" "$to/include" llvm
-  copy_headers "$bin/tools/mlir/include" "$to/include" mlir
-  copy_headers "$bin/tools/stablehlo" "$to/include" stablehlo
-  # The static libraries, less the build's own tablegen.
-  find "$bin/lib" -maxdepth 1 -name '*.a' ! -name '*TableGen*' ! -name '*Tblgen*' -exec cp -t "$to/lib" {} +
-  printf 'stablehlo %s %s\nllvm %s\n' "$stablehlo_tag" "$stablehlo" "$llvm" >"$to/pins.txt"
-
-  # The tarball, then no build state.
-  pack_dir "$mlir_build" "$mlir_pack"
-  rm -rf "$mlir_build"
-}
-
-# Set up the toolchain from its tarball.
-setup_mlir() {
-  provide "$mlir_pack" build_mlir
-  unpack "$mlir_pack" "$mlir" 1
-  echo "mlir: $mlir/include $mlir/lib"
 }
 
 [ -z "$toolchain" ] || setup_mlir

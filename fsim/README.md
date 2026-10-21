@@ -9,9 +9,9 @@ The common simulation library: a static C++ library that compiles StableHLO modu
 - `src/`: the implementation; no PJRT type leaves it.
 - `passes/`: the pass stage of the `custom-` compilers, and its `fsim-passes` tool.
 - `third_party/`: what `setup.sh` sets up:
-  - `pjrt/<entry>/`: per PJRT entry, the PJRT C API header and the plugin
   - `mlir/`: the MLIR and StableHLO headers in `include/` and static libraries in `lib/`, at StableHLO's pins
-  - `dist/`: the CPU plugin and toolchain tarballs, and the GPU wheels
+  - `pjrt/<entry>/`: per PJRT entry, the PJRT C API header and the plugin
+  - `dist/`: the toolchain and CPU plugin tarballs, and the GPU wheels
 
 A consumer adds it with `add_subdirectory(fsim)` and links `fsim`.
 Two cache variables fix the build:
