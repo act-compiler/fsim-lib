@@ -98,7 +98,6 @@ case "$name" in
 esac
 pack=pjrt-cpu-$release-linux-x86_64
 dist=third_party/dist
-tarball=$dist/$pack.tar.gz
 build=$PWD/third_party/pjrt/build/$name
 
 # The GPU wheels, each a release or all, a file and its sha256:
@@ -133,7 +132,6 @@ mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms ML
 # The toolchain layout: install, dist tarball, build scratch.
 mlir=third_party/mlir
 mlir_pack=mlir-$stablehlo_tag-linux-x86_64
-mlir_tarball=$dist/$mlir_pack.tar.gz
 mlir_build=$PWD/$mlir/build
 
 # The prebuilt CPU tarballs, each a file and its sha256.
@@ -202,11 +200,8 @@ build_plugin() {
   # A plugin without GetPjrtApi never packs.
   exports_api "$build/$pack/lib/$so"
 
-  # The tarball and its sidecar, then no build state.
-  mkdir -p "$dist"
-  tar -czf "$tarball.part" -C "$build" "$pack"
-  mv "$tarball.part" "$tarball"
-  (cd "$dist" && sha256sum "$pack.tar.gz" >"$pack.tar.gz.sha256")
+  # The tarball, then no build state.
+  pack_dir "$build" "$pack"
   rm -rf "$build"
   rmdir --ignore-fail-on-non-empty "$(dirname "$build")"
 }
@@ -243,28 +238,54 @@ unpack_wheels() {
   echo "$pins" >"$out/lib/wheels.txt"
 }
 
-# Put a pinned prebuilt tarball and its sidecar into dist/, if one is offered.
-fetch_prebuilt() {
-  local file=$1 sha
-  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
-  [ -n "$sha" ] && [ -f "$image_dist/$file" ] || return 0
-  matches "$image_dist/$file" "$sha" || {
-    echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
-    exit 1
-  }
-  echo "prebuilt: copying $image_dist/$file"
-  mkdir -p "$dist"
-  cp "$image_dist/$file" "$dist/$file.part"
-  mv "$dist/$file.part" "$dist/$file"
-  echo "$sha  $file" >"$dist/$file.sha256"
+# Move a dist/ file's .part in, after its sidecar.
+seal() {
+  echo "$2  $1" >"$dist/$1.sha256"
+  mv "$dist/$1.part" "$dist/$1"
 }
 
-# Fail unless a dist/ tarball matches its sidecar.
-verify_tarball() {
-  (cd "$dist" && sha256sum -c --status "$1.sha256") || {
-    echo "sha256 mismatch: $dist/$1" >&2
-    exit 1
-  }
+# Pack a build's directory into a dist/ tarball.
+pack_dir() {
+  mkdir -p "$dist"
+  tar -czf "$dist/$2.tar.gz.part" -C "$1" "$2"
+  seal "$2.tar.gz" "$(sha256sum <"$dist/$2.tar.gz.part" | cut -c1-64)"
+}
+
+# Put a tarball into dist/: kept, else the image's pinned copy, else a build.
+provide() {
+  local file=$1.tar.gz sha
+  # A kept tarball holds to its sidecar.
+  if [ -f "$dist/$file" ]; then
+    (cd "$dist" && sha256sum -c --status "$file.sha256") || {
+      echo "sha256 mismatch: $dist/$file" >&2
+      exit 1
+    }
+    return
+  fi
+  # The image's copy, when pinned, holds to its pin.
+  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
+  if [ -n "$sha" ] && [ -f "$image_dist/$file" ]; then
+    matches "$image_dist/$file" "$sha" || {
+      echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
+      exit 1
+    }
+    echo "prebuilt: copying $image_dist/$file"
+    mkdir -p "$dist"
+    cp "$image_dist/$file" "$dist/$file.part"
+    seal "$file" "$sha"
+    return
+  fi
+  "$2"
+}
+
+# Unpack a dist/ tarball into a dir, skipped when the dir came from it.
+unpack() {
+  local tarball=$dist/$1.tar.gz
+  cmp -s "$tarball.sha256" "$2/$1.tar.gz.sha256" && return
+  rm -rf "$2"
+  mkdir -p "$2"
+  tar -xzf "$tarball" --no-same-owner --strip-components="$3" -C "$2"
+  cp "$tarball.sha256" "$2/"
 }
 
 # Set up the entry: its header, then its plugin.
@@ -275,24 +296,12 @@ setup_pjrt() {
     fetch "$header" "https://raw.githubusercontent.com/openxla/xla/$xla/xla/pjrt/c/pjrt_c_api.h" "$header_sha"
   fi
 
-  # A -cuda12 plugin from its wheels.
+  # A -cuda12 plugin from its wheels, a -cpu one from its tarball.
   if [ "$so" = xla_cuda_plugin.so ]; then
     unpack_wheels
-    echo "pjrt: $header $out/lib/$so"
-    return
-  fi
-
-  # The plugin, prebuilt or built only when dist/ lacks its tarball.
-  [ -f "$tarball" ] || fetch_prebuilt "$pack.tar.gz"
-  [ -f "$tarball" ] || build_plugin
-  verify_tarball "$pack.tar.gz"
-
-  # The unpack, skipped when lib/ came from this tarball.
-  if ! { [ -f "$out/lib/$so" ] && cmp -s "$tarball.sha256" "$out/lib/$pack.tar.gz.sha256"; }; then
-    rm -rf "$out/lib"
-    mkdir -p "$out/lib"
-    tar -xzf "$tarball" --no-same-owner --strip-components=2 -C "$out/lib" "$pack/lib/$so"
-    cp "$tarball.sha256" "$out/lib/"
+  else
+    provide "$pack" build_plugin
+    unpack "$pack" "$out/lib" 2
   fi
   echo "pjrt: $header $out/lib/$so"
 }
@@ -351,27 +360,15 @@ build_mlir() {
   find "$bin/lib" -maxdepth 1 -name '*.a' ! -name '*TableGen*' ! -name '*Tblgen*' -exec cp -t "$to/lib" {} +
   printf 'stablehlo %s %s\nllvm %s\n' "$stablehlo_tag" "$stablehlo" "$llvm" >"$to/pins.txt"
 
-  # The tarball and its sidecar, then no build state.
-  mkdir -p "$dist"
-  tar -czf "$mlir_tarball.part" -C "$mlir_build" "$mlir_pack"
-  printf '%s  %s\n' "$(sha256sum <"$mlir_tarball.part" | cut -d' ' -f1)" "$mlir_pack.tar.gz" >"$mlir_tarball.sha256"
-  mv "$mlir_tarball.part" "$mlir_tarball"
+  # The tarball, then no build state.
+  pack_dir "$mlir_build" "$mlir_pack"
   rm -rf "$mlir_build"
 }
 
-# Set up the toolchain, prebuilt or built only when dist/ lacks its tarball.
+# Set up the toolchain from its tarball.
 setup_mlir() {
-  [ -f "$mlir_tarball" ] || fetch_prebuilt "$mlir_pack.tar.gz"
-  [ -f "$mlir_tarball" ] || build_mlir
-  verify_tarball "$mlir_pack.tar.gz"
-
-  # The unpack, skipped when lib/ came from this tarball.
-  if ! { [ -d "$mlir/lib" ] && cmp -s "$mlir_tarball.sha256" "$mlir/$mlir_pack.tar.gz.sha256"; }; then
-    rm -rf "$mlir/include" "$mlir/lib" "$mlir/pins.txt"
-    mkdir -p "$mlir"
-    tar -xzf "$mlir_tarball" --no-same-owner --strip-components=1 -C "$mlir"
-    cp "$mlir_tarball.sha256" "$mlir/"
-  fi
+  provide "$mlir_pack" build_mlir
+  unpack "$mlir_pack" "$mlir" 1
   echo "mlir: $mlir/include $mlir/lib"
 }
 
