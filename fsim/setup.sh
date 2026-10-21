@@ -59,45 +59,11 @@ done
 # No flag sets up both.
 [ -n "$want_pjrt$want_mlir" ] || want_pjrt=1 want_mlir=1
 
-# The pins per jax release: tag commit, XLA commit, header, CPU build flags.
-case "$name" in
-  jax-0.11.2-cpu | jax-0.11.2-cuda12)
-    jax=32544801e26115ac1794926d027148abf3baf009
-    xla=91888df6ce85102c30220e41d952065925e10886
-    header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
-    flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false)
-    ;;
-  jax-0.4.33-cpu | jax-0.4.33-cuda12)
-    jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
-    xla=720b2c53346660e95abbed7cf3309a8b85e979f9
-    header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
-    # The image's clang, as build.py --use_clang sets it, then the CPU flags.
-    flags=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
-      --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions
-      --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone)
-    ;;
-  *)
-    echo "unknown PJRT entry: $name" >&2
-    usage >&2
-    exit 1
-    ;;
-esac
-# The jax release, which names the tarball and the wheels.
-release=${name%-*}
+# The layout shared by every part.
+dist=third_party/dist
 
 # The bazelisk pin.
 bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
-
-# The layout: entry, dist tarball, build scratch.
-out=third_party/pjrt/$name
-header=$out/include/xla/pjrt/c/pjrt_c_api.h
-case "$name" in
-  *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
-  *) so=xla_cuda_plugin.so ;;
-esac
-pack=pjrt-cpu-$release-linux-x86_64
-dist=third_party/dist
-build=$PWD/third_party/pjrt/build/$name
 
 # The GPU wheels, each a release or all, a file and its sha256:
 # jax's plugin, then the CUDA of the with-cuda extra of jax-cuda12-plugin.
@@ -117,8 +83,51 @@ all nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17
 all nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_x86_64.whl bb94b2348e4861d5e8aa00b36c3d12d9bdf9c6369b82cbb723de0b582280a21c
 all nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9
 "
-# This entry's wheels, a file and a sha256 per line.
-pins=$(awk -v r="$release" '$1 == r || $1 == "all" { print $2, $3 }' <<<"$wheels")
+
+# Select an entry: its pins, its layout and its wheels.
+select_entry() {
+  name=$1
+  # The jax release, which names the pins, the tarball and the wheels.
+  release=${name%-*}
+  # The device names the plugin; an unknown one blanks the release.
+  case "$name" in
+    *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
+    *-cuda12) so=xla_cuda_plugin.so ;;
+    *) release= ;;
+  esac
+  # The pins per jax release: tag commit, XLA commit, header, CPU build flags.
+  case "$release" in
+    jax-0.11.2)
+      jax=32544801e26115ac1794926d027148abf3baf009
+      xla=91888df6ce85102c30220e41d952065925e10886
+      header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
+      flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false)
+      ;;
+    jax-0.4.33)
+      jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
+      xla=720b2c53346660e95abbed7cf3309a8b85e979f9
+      header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
+      # The image's clang, as build.py --use_clang sets it, then the CPU flags.
+      flags=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
+        --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions
+        --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone)
+      ;;
+    *)
+      echo "unknown PJRT entry: $name" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+
+  # The layout: entry, dist tarball, build scratch.
+  out=third_party/pjrt/$name
+  header=$out/include/xla/pjrt/c/pjrt_c_api.h
+  pack=pjrt-cpu-$release-linux-x86_64
+  build=$PWD/third_party/pjrt/build/$name
+
+  # This entry's wheels, a file and a sha256 per line.
+  pins=$(awk -v r="$release" '$1 == r || $1 == "all" { print $2, $3 }' <<<"$wheels")
+}
 
 # The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
 stablehlo_tag=v1.20.0
@@ -357,5 +366,6 @@ setup_mlir() {
   echo "mlir: $mlir/include $mlir/lib"
 }
 
+select_entry "$name"
 [ -z "$want_pjrt" ] || setup_pjrt
 [ -z "$want_mlir" ] || setup_mlir
