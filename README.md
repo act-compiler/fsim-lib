@@ -26,7 +26,7 @@ Under review at a major systems conference.
 Everything runs in the container; nothing is installed on the host.
 
 ```bash
-./docker/build.sh                 # build the image, fsim-lib:latest-<arch>, on the env image
+./docker/build.sh                 # build the image, fsim-lib:latest-amd64, on the env image
 ./scripts/setup.sh                # set up the default PJRT entry and the MLIR toolchain
 ./scripts/build.sh fsim           # build the library into fsim/build/
 ```

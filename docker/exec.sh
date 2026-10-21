@@ -3,15 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-case "$(uname -m)" in
-  x86_64) ARCH="amd64" ;;
-  aarch64) ARCH="arm64" ;;
-  *)
-    echo "Error: Unsupported architecture: $(uname -m)"
-    exit 1
-    ;;
-esac
-IMAGE_NAME="fsim-lib:latest-${ARCH}"
+# Refuse a non-x86_64 host
+[ "$(uname -m)" = x86_64 ] || {
+  echo "Error: fsim-lib runs on x86_64 only, not $(uname -m)"
+  exit 1
+}
+IMAGE_NAME="fsim-lib:latest-amd64"
 
 HOST_MOUNT="$(pwd)/.."
 
