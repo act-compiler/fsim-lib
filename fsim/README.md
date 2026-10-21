@@ -155,7 +155,7 @@ A `-cpu` plugin or the toolchain looks for its tarball in this order:
 - Steps 2 and 3 take only a tarball whose sha256 `setup.sh` pins, and skip an unpinned one.
 - A tarball there whose sha256 differs from its pin fails the setup, never falling through to the next step.
 - A failed download from `$FSIM_DIST_URL` fails the setup too, never falling through to the source build.
-- `setup.sh` pins the `jax-0.11.2-cpu` plugin and the toolchain on x86_64.
+- `setup.sh` pins the `jax-0.11.2-cpu` and `jax-0.4.33-cpu` plugins and the toolchain on x86_64.
 
 ```bash
 ./scripts/setup.sh          # set up the default entry and the toolchain

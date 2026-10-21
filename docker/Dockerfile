@@ -74,9 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       clang-18 lld-18 llvm-18-dev zlib1g-dev cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# the CPU tarballs setup.sh unpacks, from the dist context
-ARG PJRT_TARBALL MLIR_TARBALL
-COPY --from=dist ${PJRT_TARBALL}* ${MLIR_TARBALL}* /opt/fsim/dist/
+# the CPU tarballs setup.sh unpacks, and their sidecars, from the dist context
+COPY --from=dist . /opt/fsim/dist/
 
 # the env's tag and the Neuron SDK its nki env matches
 ARG FSIM_ENV_TAG

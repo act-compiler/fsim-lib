@@ -104,26 +104,19 @@ if [ "${ENV_ONLY}" -eq 1 ]; then
   IMAGE_NAME="${ENV_BUILD_IMAGE_NAME}"
 fi
 
-# The tarballs' names, from the versions the env's tag names
-[[ "${FSIM_ENV_BUILD_TAG}" =~ -jax([^-]+)-shlo([^-]+)- ]] || {
-  echo "Error: FSIM_ENV_BUILD_TAG names no -jax<version>-shlo<version>-: ${FSIM_ENV_BUILD_TAG}"
-  exit 1
-}
-PJRT_TARBALL="pjrt-cpu-jax-${BASH_REMATCH[1]}-linux-$(uname -m).tar.gz"
-MLIR_TARBALL="mlir-v${BASH_REMATCH[2]}-linux-$(uname -m).tar.gz"
+# The tarballs: every one setup.sh pins prebuilt for this arch
+TARBALLS=()
+for f in $(sed -n '/^prebuilt="$/,/^"$/s/^\([^ ]*\) [0-9a-f]\{64\}$/\1/p' ../fsim/setup.sh); do
+  [[ "${f}" != *"-linux-$(uname -m).tar.gz" ]] || TARBALLS+=("${f}")
+done
 MISSING=()
-for f in "${PJRT_TARBALL}" "${MLIR_TARBALL}"; do
+for f in "${TARBALLS[@]}"; do
   [ -f "${DIST_DIR}/${f}" ] || MISSING+=("${f}")
 done
-# A release env holds both tarballs
+# A release env holds every tarball
 if [ "${ENV_ONLY}" -eq 1 ] && [ "${#MISSING[@]}" -gt 0 ]; then
-  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh builds them. Aborting."
+  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh with its --pjrt or --mlir builds each. Aborting."
   exit 1
-fi
-# An env without the dist context gets an empty one
-if [ ! -d "${DIST_DIR}" ]; then
-  DIST_DIR="$(mktemp -d)"
-  trap 'rmdir "${DIST_DIR}"' EXIT
 fi
 
 # Does an old image exist?
@@ -183,14 +176,22 @@ if [ "${IMAGE_EXISTS}" -eq 1 ] && [ "${REBUILD}" -eq 1 ]; then
   docker image rm "${IMAGE_NAME}"
 fi
 
+# The dist context: the tarballs and sidecars present, else empty
+DIST_CTX="$(mktemp -d)"
+trap 'rm -rf "${DIST_CTX}"' EXIT
+for f in "${TARBALLS[@]}"; do
+  for p in "${DIST_DIR}/${f}" "${DIST_DIR}/${f}.sha256"; do
+    [ ! -f "${p}" ] || cp "${p}" "${DIST_CTX}/"
+  done
+done
+
 # Build one stage of the Dockerfile as an image, with no provenance or SBOM attestation to push
 build_stage() {
   echo
   echo "Building $2..."
   docker build -f "${DOCKERFILE}" --target "$1" -t "$2" --provenance=false --sbom=false --build-arg OS="${BASE_OS}" \
     --build-arg FSIM_ENV_IMAGE="${ENV_IMAGE_NAME}" --build-arg FSIM_ENV_TAG="${FSIM_ENV_BUILD_TAG}" \
-    --build-arg PJRT_TARBALL="${PJRT_TARBALL}" --build-arg MLIR_TARBALL="${MLIR_TARBALL}" \
-    --build-context dist="${DIST_DIR}" .
+    --build-context dist="${DIST_CTX}" .
 }
 
 # The env alone, or the local stage on it
