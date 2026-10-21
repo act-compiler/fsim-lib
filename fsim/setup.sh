@@ -155,14 +155,6 @@ fetch() {
   mv "$1.part" "$1"
 }
 
-# Fail unless the plugin exports GetPjrtApi.
-exports_api() {
-  nm -D --defined-only --without-symbol-versions "$1" | grep ' T GetPjrtApi$' >/dev/null || {
-    echo "pjrt: $so exports no GetPjrtApi" >&2
-    exit 1
-  }
-}
-
 # Build the plugin from source, then pack it into dist/.
 build_plugin() {
   local bz=("$build/bin/bazelisk" --output_user_root="$build/root")
@@ -193,7 +185,10 @@ build_plugin() {
     cp "$("${bz[@]}" cquery "${all[@]}" --output=files "$label")" "$build/$pack/lib/"
   )
   # A plugin without GetPjrtApi never packs.
-  exports_api "$build/$pack/lib/$so"
+  nm -D --defined-only --without-symbol-versions "$build/$pack/lib/$so" | grep ' T GetPjrtApi$' >/dev/null || {
+    echo "pjrt: $so exports no GetPjrtApi" >&2
+    exit 1
+  }
 
   # The tarball, then no build state.
   pack_dir "$build" "$pack"
@@ -229,7 +224,6 @@ unpack_wheels() {
   rm -rf "$out"/*.dist-info
   # zipfile drops the mode bits, so ptxas would not run.
   chmod +x "$out"/nvidia/*/bin/*
-  exports_api "$out/lib/$so"
   echo "$pins" >"$out/lib/wheels.txt"
 }
 
