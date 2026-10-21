@@ -168,6 +168,7 @@ mlir_build=$PWD/$mlir/build
 # The prebuilt CPU tarballs, each a file and its sha256.
 prebuilt="
 pjrt-cpu-jax-0.11.2-linux-x86_64.tar.gz e7f07bbdff2e67d1b0766c1a8f5632d39af7c0fcab72586de4928c25a5816692
+pjrt-cpu-jax-0.4.33-linux-x86_64.tar.gz 873129acd6df14c07f1e2b2ab0f0e616a763f00a38a7bfc56b918563e503c1a4
 mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 "
 # Where prebuilt tarballs come from: a directory, then a url.
