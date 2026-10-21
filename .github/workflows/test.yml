@@ -15,8 +15,8 @@ jobs:
       - name: Build the image
         run: ./docker/build.sh
 
-      - name: Set up the toolchain
-        run: ./scripts/setup.sh
+      - name: Set up the toolchain and plugin
+        run: ./scripts/setup.sh mlir jax-0.11.2-cpu
 
       - name: Build the library
         run: ./scripts/build.sh fsim
