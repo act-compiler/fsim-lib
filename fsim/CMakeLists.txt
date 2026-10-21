@@ -35,7 +35,7 @@ else()
 endif()
 # A missing entry stops the configure.
 if(NOT EXISTS "${FSIM_PJRT_PLUGIN}")
-  message(FATAL_ERROR "No ${FSIM_PJRT_PLUGIN}: run ./scripts/setup.sh --pjrt ${FSIM_PJRT}")
+  message(FATAL_ERROR "No ${FSIM_PJRT_PLUGIN}: run ./scripts/setup.sh ${FSIM_PJRT}")
 endif()
 string(TOUPPER "${FSIM_VARIANT}" FSIM_VARIANT_NAME)
 # The compiler's kind, xla or custom, names its definition.

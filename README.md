@@ -13,7 +13,7 @@ Under review at a major systems conference.
 - `docker/`: the image and its wrappers; every command runs through them.
 - `benchmarks/nki/`: the nki benchmark cases, a folder per source, and their generators under `gen/`.
 - `scripts/`: the host entry points over `docker/exec.sh`:
-  - `setup.sh`: the setup of the library's pinned PJRT entry and MLIR toolchain into `fsim/third_party/`
+  - `setup.sh`: the setup of the library's MLIR toolchain and PJRT plugins into `fsim/third_party/`
   - `build.sh`: the build of a target, `fsim` for the library or `nki` for the NKI driver at a `--compiler` and `--variant`
   - `clean.sh`: the removal of generated files, only files git ignores
   - `bench.sh`: the generation of one ISA's benchmark cases and their runs on one build of its driver
@@ -27,7 +27,7 @@ Everything runs in the container; nothing is installed on the host.
 
 ```bash
 ./docker/build.sh                 # build the image, fsim-lib:latest-amd64, on the env image
-./scripts/setup.sh                # set up the default PJRT entry and the MLIR toolchain
+./scripts/setup.sh                # set up the MLIR toolchain and every plugin this host runs
 ./scripts/build.sh fsim           # build the library into fsim/build/
 ```
 
@@ -45,16 +45,18 @@ Everything runs in the container; nothing is installed on the host.
 
 ## Setup
 
-`./scripts/setup.sh` runs `fsim/setup.sh` in the container, and without a flag sets up both parts:
+`./scripts/setup.sh` runs `fsim/setup.sh` in the container, which sets up the parts its arguments name.
 
-- `--pjrt NAME`: one PJRT entry, `jax-0.11.2-cpu` by default; `fsim/README.md` lists the entries.
-- `--mlir`: the MLIR and StableHLO toolchain the `custom-` compilers need.
-
-A part already in `fsim/third_party/` is skipped.
-A `-cpu` plugin builds for 1-2 h when its tarball is absent from `fsim/third_party/dist/`, and the toolchain for about 10 min.
+- Without an argument, it sets up the MLIR and StableHLO toolchain the `custom-` compilers need.
+  It also sets up every `-cpu` PJRT entry, and every `-cuda12` one when `nvidia-smi` sees a GPU.
+- Each argument names one part: `mlir` for the toolchain, or a PJRT entry `fsim/README.md` lists.
+- With arguments, only the named parts are set up.
+- A part already in `fsim/third_party/` is skipped.
+- The toolchain builds from source for about 10 min when no tarball is found, and a `-cpu` plugin for 1-2 h.
 
 ```bash
-./scripts/setup.sh --pjrt jax-0.11.2-cuda12   # a GPU host adds CUDA: one GPU entry and its wheels
+./scripts/setup.sh mlir jax-0.11.2-cpu    # the toolchain and the default compiler's entry
+./scripts/setup.sh jax-0.11.2-cuda12      # one GPU entry and its wheels, also without a GPU
 ```
 
 ## Build

@@ -108,7 +108,7 @@ for f in "${TARBALLS[@]}"; do
 done
 # A release env holds every tarball
 if [ "${ENV_ONLY}" -eq 1 ] && [ "${#MISSING[@]}" -gt 0 ]; then
-  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh with its --pjrt or --mlir builds each. Aborting."
+  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh puts each there. Aborting."
   exit 1
 fi
 

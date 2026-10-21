@@ -1,13 +1,9 @@
 #!/bin/bash
-# Sets up one PJRT entry and the MLIR toolchain under fsim/third_party/.
+# Sets up fsim/third_party/ for CMake: the MLIR toolchain and PJRT plugin entries.
+# Each NAME argument picks one part, mlir or an entry; none picks every part this host runs.
 # An entry is the PJRT C API header of its XLA commit, pinned by sha256, and its plugin.
-# A -cpu plugin is unpacked from its dist/ tarball, else a prebuilt one, else a build
-# from jax's Bazel workspace at the entry's tag; a build packs the tarball into dist/.
-# A -cuda12 plugin and its CUDA come from PyPI wheels, pinned by sha256 and kept in dist/.
-# The toolchain is MLIR and StableHLO's static libraries and headers at StableHLO's pins,
-# unpacked the same way, with a build from source; a build packs the tarball into dist/.
-# A prebuilt tarball is pinned by sha256 and copied into dist/ from /opt/fsim/dist.
-#   ./fsim/setup.sh [--pjrt NAME] [--mlir]
+# The toolchain and a -cpu plugin unpack from a dist/ tarball, copied pinned from
+# /opt/fsim/dist, else built from source; a -cuda12 plugin unpacks from pinned wheels.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,47 +13,50 @@ cd "$(dirname "$0")"
   exit 1
 }
 
+# The PJRT entries, a jax release and a device each.
+entries=(jax-0.11.2-cpu jax-0.4.33-cpu jax-0.11.2-cuda12 jax-0.4.33-cuda12)
+
 usage() {
-  echo "usage: $0 [--pjrt NAME] [--mlir]"
-  echo "  NAME: jax-0.11.2-cpu (default), jax-0.4.33-cpu, jax-0.11.2-cuda12 or jax-0.4.33-cuda12"
-  echo "  --pjrt fetches the entry's header, then unpacks its plugin from third_party/dist/:"
-  echo "  a -cpu tarball, built there first when absent, or -cuda12 wheels, fetched there first"
-  echo "  --mlir unpacks the toolchain's tarball from third_party/dist/, built there first when absent"
-  echo "  an absent tarball first comes prebuilt from /opt/fsim/dist when pinned"
-  echo "  no flag sets up the default entry and the toolchain"
+  echo "usage: ./scripts/setup.sh [NAME]..."
+  echo "  sets up each named part: mlir, the MLIR toolchain, or a plugin with its PJRT C API header"
+  echo "  NAME  mlir ${entries[*]}"
+  echo "  without a NAME, the toolchain, every -cpu plugin, and every -cuda12 one when nvidia-smi sees a GPU"
 }
 
-name=jax-0.11.2-cpu
-want_pjrt=
-want_mlir=
-while [ $# -gt 0 ]; do
+plugins=()
+toolchain=
+while [ "$#" -gt 0 ]; do
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    --pjrt)
-      [ $# -gt 1 ] || {
+    mlir) toolchain=1 ;;
+    *)
+      # One entry name, never a list of them.
+      if [[ $1 != *[[:space:]]* && " ${entries[*]} " == *" $1 "* ]]; then
+        plugins+=("$1")
+      else
+        echo "unknown argument: $1" >&2
         usage >&2
         exit 1
-      }
-      name=$2
-      want_pjrt=1
-      shift 2
-      ;;
-    --mlir)
-      want_mlir=1
-      shift
-      ;;
-    *)
-      echo "unknown argument: $1" >&2
-      usage >&2
-      exit 1
+      fi
       ;;
   esac
+  shift
 done
-# No flag sets up both.
-[ -n "$want_pjrt$want_mlir" ] || want_pjrt=1 want_mlir=1
+# No NAME takes the toolchain, every -cpu entry, and every -cuda12 one on a GPU.
+if [ -z "$toolchain" ] && [ "${#plugins[@]}" -eq 0 ]; then
+  toolchain=1
+  gpu=
+  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1 && gpu=1
+  for p in "${entries[@]}"; do
+    case "$p" in
+      *-cpu) plugins+=("$p") ;;
+      *) [ -z "$gpu" ] || plugins+=("$p") ;;
+    esac
+  done
+fi
 
 # The layout shared by every part.
 dist=third_party/dist
@@ -89,11 +88,10 @@ select_entry() {
   name=$1
   # The jax release, which names the pins, the tarball and the wheels.
   release=${name%-*}
-  # The device names the plugin; an unknown one blanks the release.
+  # The device names the plugin.
   case "$name" in
     *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
-    *-cuda12) so=xla_cuda_plugin.so ;;
-    *) release= ;;
+    *) so=xla_cuda_plugin.so ;;
   esac
   # The pins per jax release: tag commit, XLA commit, header, CPU build flags.
   case "$release" in
@@ -111,11 +109,6 @@ select_entry() {
       flags=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
         --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions
         --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone)
-      ;;
-    *)
-      echo "unknown PJRT entry: $name" >&2
-      usage >&2
-      exit 1
       ;;
   esac
 
@@ -173,8 +166,7 @@ build_plugin() {
     # Keep the GetPjrtApi object, and export it.
     --linkopt=-Wl,--undefined=GetPjrtApi '--per_file_copt=.*xla/pjrt/c/pjrt_c_api_cpu\.cc@-fvisibility=default')
   local label=@xla//xla/pjrt/c:$so
-  export HOME=$build/home XDG_CACHE_HOME=$build/cache BAZELISK_HOME=$build/cache/bazelisk
-  mkdir -p "$build/bin" "$HOME"
+  mkdir -p "$build/bin"
   [ -x "$build/bin/bazelisk" ] || {
     fetch "$build/bin/bazelisk" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64" "$bazelisk_sha"
     chmod +x "$build/bin/bazelisk"
@@ -187,6 +179,9 @@ build_plugin() {
   [ ! -d "$build/root" ] || chown -R "$(id -u):$(id -g)" "$build/root"
   echo "pjrt: building $name, 1-2 h"
   (
+    # Bazel's homes, in this subshell only.
+    export HOME=$build/home XDG_CACHE_HOME=$build/cache BAZELISK_HOME=$build/cache/bazelisk
+    mkdir -p "$HOME"
     cd "$build/jax"
     trap '"${bz[@]}" shutdown' EXIT
     "${bz[@]}" build "${all[@]}" "$label"
@@ -366,6 +361,8 @@ setup_mlir() {
   echo "mlir: $mlir/include $mlir/lib"
 }
 
-select_entry "$name"
-[ -z "$want_pjrt" ] || setup_pjrt
-[ -z "$want_mlir" ] || setup_mlir
+[ -z "$toolchain" ] || setup_mlir
+for name in "${plugins[@]}"; do
+  select_entry "$name"
+  setup_pjrt
+done

@@ -128,22 +128,24 @@ A failed phase fails the module's compile with the phase's diagnostics.
 ./docker/exec.sh "fsim/build/fsim-passes <in.mlir> -o <out.bc> [--text] [--trace] [--histogram]"
 ```
 
-`setup.sh` takes two flags, and without either sets up the default entry and the toolchain:
+`setup.sh` takes names as arguments, each one part to set up:
 
-| flag          | what it sets up                                                   |
-| ------------- | ----------------------------------------------------------------- |
-| `--pjrt NAME` | one of the four entries above, default `jax-0.11.2-cpu`           |
-| `--mlir`      | the MLIR toolchain at StableHLO `v1.20.0` and that tag's LLVM pin |
+| argument      | what it sets up                                                     |
+| ------------- | ------------------------------------------------------------------- |
+| `mlir`        | the MLIR toolchain at StableHLO `v1.20.0` and that tag's LLVM pin   |
+| an entry name | one of the four entries above                                       |
+| none          | the toolchain, every `-cpu` entry, and every `-cuda12` one on a GPU |
 
-- A `-cpu` entry unpacks its plugin from its tarball, and builds it for 1-2 h when no tarball is found.
+- Names repeat and combine, and only the named parts are set up.
+- Without a name, a GPU is one `nvidia-smi` sees in the container.
+- The toolchain or a `-cpu` plugin unpacks its tarball from `dist/`, else pinned from `/opt/fsim/dist`, else from a source build.
+  That build takes about 10 min for the toolchain and 1-2 h for a plugin.
 - A `-cuda12` entry fetches its plugin and CUDA as PyPI wheels pinned by sha256 into `dist/`, then unpacks them.
-- The toolchain unpacks from its tarball, and builds from source for about 10 min when no tarball is found.
 - A part already unpacked from the same tarball is skipped.
-- A `-cpu` plugin or the toolchain takes its tarball from `dist/`, else pinned from `/opt/fsim/dist`, else from a source build.
 - An image tarball whose sha256 differs from its pin fails the setup.
-- `setup.sh` runs on x86_64 only, and pins the `jax-0.11.2-cpu` and `jax-0.4.33-cpu` plugins and the toolchain.
+- `setup.sh` runs on x86_64 only, and pins the toolchain and the `jax-0.11.2-cpu` and `jax-0.4.33-cpu` plugins.
 
 ```bash
-./scripts/setup.sh          # set up the default entry and the toolchain
+./scripts/setup.sh          # set up the toolchain and every plugin this host runs
 ./scripts/build.sh fsim     # build into fsim/build/
 ```
