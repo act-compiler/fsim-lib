@@ -3,7 +3,7 @@
 # LLVM never meets a driver's; fsim-passes runs the stage over a file.
 set(FSIM_MLIR_DIR "${PROJECT_SOURCE_DIR}/third_party/mlir")
 if(NOT EXISTS "${FSIM_MLIR_DIR}/lib")
-  message(FATAL_ERROR "No MLIR toolchain in ${FSIM_MLIR_DIR}: run ./scripts/setup.sh --mlir")
+  message(FATAL_ERROR "No MLIR toolchain in ${FSIM_MLIR_DIR}: run ./scripts/setup.sh mlir")
 endif()
 file(GLOB FSIM_MLIR_LIBS "${FSIM_MLIR_DIR}/lib/*.a")
 

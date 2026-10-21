@@ -1,155 +1,65 @@
 #!/bin/bash
-# Sets up one PJRT entry and the MLIR toolchain under fsim/third_party/.
+# Sets up fsim/third_party/ for CMake: the MLIR toolchain and PJRT plugin entries.
+# Each NAME argument picks one part, mlir or an entry; none picks every part this host runs.
 # An entry is the PJRT C API header of its XLA commit, pinned by sha256, and its plugin.
-# A -cpu plugin is unpacked from its dist/ tarball, else a prebuilt one, else a build
-# from jax's Bazel workspace at the entry's tag; a build packs the tarball into dist/.
-# A -cuda12 plugin and its CUDA come from PyPI wheels, pinned by sha256 and kept in dist/.
-# The toolchain is MLIR and StableHLO's static libraries and headers at StableHLO's pins,
-# unpacked the same way, with a build from source; a build packs the tarball into dist/.
-# A prebuilt tarball is pinned by sha256 and copied into dist/ from $FSIM_DIST_DIR
-# (default /opt/fsim/dist), else fetched from $FSIM_DIST_URL when that is set.
-#   ./fsim/setup.sh [--pjrt NAME] [--mlir]
+# The toolchain and a -cpu plugin unpack from a dist/ tarball, copied pinned from
+# /opt/fsim/dist, else built from source; a -cuda12 plugin unpacks from pinned wheels.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage() {
-  echo "usage: $0 [--pjrt NAME] [--mlir]"
-  echo "  NAME: jax-0.11.2-cpu (default), jax-0.4.33-cpu, jax-0.11.2-cuda12 or jax-0.4.33-cuda12"
-  echo "  --pjrt fetches the entry's header, then unpacks its plugin from third_party/dist/:"
-  echo "  a -cpu tarball, built there first when absent, or -cuda12 wheels, fetched there first"
-  echo "  --mlir unpacks the toolchain's tarball from third_party/dist/, built there first when absent"
-  echo "  an absent tarball first comes prebuilt from \$FSIM_DIST_DIR or \$FSIM_DIST_URL when pinned"
-  echo "  no flag sets up the default entry and the toolchain"
+# The pins are x86_64 only.
+[ "$(uname -m)" = x86_64 ] || {
+  echo "setup.sh: x86_64 only, not $(uname -m)" >&2
+  exit 1
 }
 
-name=jax-0.11.2-cpu
-want_pjrt=
-want_mlir=
-while [ $# -gt 0 ]; do
+# The PJRT entries, a jax release and a device each.
+entries=(jax-0.11.2-cpu jax-0.4.33-cpu jax-0.11.2-cuda12 jax-0.4.33-cuda12)
+
+usage() {
+  echo "usage: ./scripts/setup.sh [NAME]..."
+  echo "  sets up each named part: mlir, the MLIR toolchain, or a plugin with its PJRT C API header"
+  echo "  NAME  mlir ${entries[*]}"
+  echo "  without a NAME, the toolchain, every -cpu plugin, and every -cuda12 one when nvidia-smi sees a GPU"
+}
+
+plugins=()
+toolchain=
+while [ "$#" -gt 0 ]; do
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    --pjrt)
-      [ $# -gt 1 ] || {
+    mlir) toolchain=1 ;;
+    *)
+      # One entry name, never a list of them.
+      if [[ $1 != *[[:space:]]* && " ${entries[*]} " == *" $1 "* ]]; then
+        plugins+=("$1")
+      else
+        echo "unknown argument: $1" >&2
         usage >&2
         exit 1
-      }
-      name=$2
-      want_pjrt=1
-      shift 2
-      ;;
-    --mlir)
-      want_mlir=1
-      shift
-      ;;
-    *)
-      echo "unknown argument: $1" >&2
-      usage >&2
-      exit 1
+      fi
       ;;
   esac
+  shift
 done
-# No flag sets up both.
-[ -n "$want_pjrt$want_mlir" ] || want_pjrt=1 want_mlir=1
-
-# The pins per jax release: tag commit, XLA commit, header, CPU build flags.
-arch=$(uname -m)
-case "$name" in
-  jax-0.11.2-cpu | jax-0.11.2-cuda12)
-    jax=32544801e26115ac1794926d027148abf3baf009
-    xla=91888df6ce85102c30220e41d952065925e10886
-    header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
-    case "$arch" in
-      x86_64) flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false) ;;
-      aarch64) flags=(--config=ci_linux_aarch64 --config=public_cache) ;;
+# No NAME takes the toolchain, every -cpu entry, and every -cuda12 one on a GPU.
+if [ -z "$toolchain" ] && [ "${#plugins[@]}" -eq 0 ]; then
+  toolchain=1
+  gpu=
+  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1 && gpu=1
+  for p in "${entries[@]}"; do
+    case "$p" in
+      *-cpu) plugins+=("$p") ;;
+      *) [ -z "$gpu" ] || plugins+=("$p") ;;
     esac
-    ;;
-  jax-0.4.33-cpu | jax-0.4.33-cuda12)
-    jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
-    xla=720b2c53346660e95abbed7cf3309a8b85e979f9
-    header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
-    # The image's clang, as build.py --use_clang sets it.
-    clang=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
-      --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions)
-    case "$arch" in
-      x86_64) flags=("${clang[@]}" --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone) ;;
-      aarch64) flags=("${clang[@]}" --strategy=Genrule=standalone) ;;
-    esac
-    ;;
-  *)
-    echo "unknown PJRT entry: $name" >&2
-    usage >&2
-    exit 1
-    ;;
-esac
-# The jax release, which names the tag, the tarball and the wheels.
-release=${name%-*}
-tag=jax-v${release#jax-}
+  done
+fi
 
-# The bazelisk pin per arch.
-case "$arch" in
-  x86_64)
-    bazelisk=bazelisk-linux-amd64
-    bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
-    ;;
-  aarch64)
-    bazelisk=bazelisk-linux-arm64
-    bazelisk_sha=e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010
-    ;;
-  *)
-    echo "no pinned PJRT build for $arch" >&2
-    exit 1
-    ;;
-esac
-
-# The layout: entry, dist tarball, build scratch.
-out=third_party/pjrt/$name
-header=$out/include/xla/pjrt/c/pjrt_c_api.h
-case "$name" in
-  *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
-  *) so=xla_cuda_plugin.so ;;
-esac
-pack=pjrt-cpu-$release-linux-$arch
+# The layout shared by every part.
 dist=third_party/dist
-tarball=$dist/$pack.tar.gz
-build=$PWD/third_party/pjrt/build/$name
-
-# The GPU wheels, each a release or all, an arch, a file and its sha256:
-# jax's plugin, then the CUDA of the with-cuda extra of jax-cuda12-plugin.
-wheels="
-jax-0.11.2 x86_64 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_x86_64.whl 2133b3afc63307c016ae4980f166b2b3de199759363ead74f7d550eaae953463
-jax-0.4.33 x86_64 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_x86_64.whl b43f199ec27fd9b3bb79b34ed297894ad50bb7a6eab62012baaa9ea6607b22de
-jax-0.11.2 x86_64 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4
-jax-0.11.2 x86_64 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl b2e5760d6158aefe7bb74348d5128bb1b46a7dd1fd4b7b1e6fe55b4b07888f70
-all x86_64 nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702
-all x86_64 nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_x86_64.whl 096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f
-all x86_64 nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0
-all x86_64 nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3
-all x86_64 nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_x86_64.whl 0a4aa3a7d2264256506c6857fc41fc0c499982f78d70195b1cfcc9055c1957cd
-all x86_64 nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
-all x86_64 nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_x86_64.whl 15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88
-all x86_64 nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78
-all x86_64 nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_x86_64.whl bb94b2348e4861d5e8aa00b36c3d12d9bdf9c6369b82cbb723de0b582280a21c
-all x86_64 nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9
-jax-0.11.2 aarch64 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_aarch64.whl f36247d40973b20acf3c69dac7c9c720daaa4096a809b3e8fd70292be617cdeb
-jax-0.4.33 aarch64 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_aarch64.whl 6a9945a8b58fabd040a06850f5ca6bcf94b9ec45b8248afb20c7f2eb809e2cea
-jax-0.11.2 aarch64 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 096d4de6bda726415dfaf3198d4f5c522b8e70139c97feef5cd2ca6d4cd9cead
-jax-0.11.2 aarch64 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 313ba41c8aacf03f9524ca83ddb2c62e7b3d82f71af815a35e3739f3d64452b2
-all aarch64 nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_aarch64.whl 5572131a59c3eebeeb1c4c8144f772d49372c20124916e072a0e3fc30df421d5
-all aarch64 nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_aarch64.whl 791853b030602c6a11d08b5578edfb957cadea06e9d3b26adbf8d036135a4afe
-all aarch64 nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 44e1eca4d08926193a558d2434b1bf83d57b4d5743e0c431c0c83d51da1df62b
-all aarch64 nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4
-all aarch64 nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_aarch64.whl 5bc22243563107ea06aa60f9116ad800063d5f4617cc75bc6670d5db78d9f336
-all aarch64 nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf
-all aarch64 nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_aarch64.whl 62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2
-all aarch64 nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83
-all aarch64 nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_aarch64.whl 061af42ae1044816820e16b872075e243d1ac0656f51860fbc8e106c257aa83a
-all aarch64 nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl 994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca
-"
-# This entry's wheels, a file and a sha256 per line.
-pins=$(awk -v r="$release" -v a="$arch" '($1 == r || $1 == "all") && $2 == a { print $3, $4 }' <<<"$wheels")
 
 # The toolchain pins: StableHLO's tag and commit, and its LLVM commit.
 stablehlo_tag=v1.20.0
@@ -161,19 +71,78 @@ mlir_targets=(MLIRParser MLIRBytecodeWriter MLIRBytecodeReader MLIRTransforms ML
 
 # The toolchain layout: install, dist tarball, build scratch.
 mlir=third_party/mlir
-mlir_pack=mlir-$stablehlo_tag-linux-$arch
-mlir_tarball=$dist/$mlir_pack.tar.gz
+mlir_pack=mlir-$stablehlo_tag-linux-x86_64
 mlir_build=$PWD/$mlir/build
+
+# The bazelisk pin.
+bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
+
+# The GPU wheels, each a release or all, a file and its sha256:
+# jax's plugin, then the CUDA of the with-cuda extra of jax-cuda12-plugin.
+wheels="
+jax-0.11.2 jax_cuda12_pjrt-0.11.2-py3-none-manylinux_2_27_x86_64.whl 2133b3afc63307c016ae4980f166b2b3de199759363ead74f7d550eaae953463
+jax-0.4.33 jax_cuda12_pjrt-0.4.33-py3-none-manylinux2014_x86_64.whl b43f199ec27fd9b3bb79b34ed297894ad50bb7a6eab62012baaa9ea6607b22de
+jax-0.11.2 nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4
+jax-0.11.2 nvidia_nvshmem_cu12-3.8.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl b2e5760d6158aefe7bb74348d5128bb1b46a7dd1fd4b7b1e6fe55b4b07888f70
+all nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702
+all nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_x86_64.whl 096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f
+all nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl 5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0
+all nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3
+all nvidia_cudnn_cu12-9.27.0.42-py3-none-manylinux_2_27_x86_64.whl 0a4aa3a7d2264256506c6857fc41fc0c499982f78d70195b1cfcc9055c1957cd
+all nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
+all nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_x86_64.whl 15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88
+all nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl 73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78
+all nvidia_nccl_cu12-2.32.3-py3-none-manylinux_2_27_x86_64.whl bb94b2348e4861d5e8aa00b36c3d12d9bdf9c6369b82cbb723de0b582280a21c
+all nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9
+"
+
+# Select an entry: its pins, its layout and its wheels.
+select_entry() {
+  name=$1
+  # The jax release, which names the pins, the tarball and the wheels.
+  release=${name%-*}
+  # The device names the plugin.
+  case "$name" in
+    *-cpu) so=pjrt_c_api_cpu_plugin.so ;;
+    *) so=xla_cuda_plugin.so ;;
+  esac
+  # The pins per jax release: tag commit, XLA commit, header, CPU build flags.
+  case "$release" in
+    jax-0.11.2)
+      jax=32544801e26115ac1794926d027148abf3baf009
+      xla=91888df6ce85102c30220e41d952065925e10886
+      header_sha=ddedb2e7b4df1d19a8d15c23e41298a3f41d48076707bd563d672f6a95736213
+      flags=(--config=ci_linux_x86_64 --config=public_cache --define=xnn_enable_avxvnniint8=false)
+      ;;
+    jax-0.4.33)
+      jax=80e1c94de63e7f89667cdf35f38d8fe298e97a50
+      xla=720b2c53346660e95abbed7cf3309a8b85e979f9
+      header_sha=70f0abfebb76464b2132eb1aa86508dd7e30bb7f7b4add6d4e2e5d8bbbc6deb9
+      # The image's clang, as build.py --use_clang sets it, then the CPU flags.
+      flags=(--action_env=CLANG_COMPILER_PATH=/usr/bin/clang-18 --repo_env=CC=/usr/bin/clang-18 --repo_env=CXX=/usr/bin/clang++-18
+        --repo_env=BAZEL_COMPILER=/usr/bin/clang-18 --copt=-Wno-error=unused-command-line-argument --copt=-Wno-gnu-offsetof-extensions
+        --config=avx_posix --config=mkl_open_source_only --strategy=Genrule=standalone)
+      ;;
+  esac
+
+  # The layout: entry, dist tarball, build scratch.
+  out=third_party/pjrt/$name
+  header=$out/include/xla/pjrt/c/pjrt_c_api.h
+  pack=pjrt-cpu-$release-linux-x86_64
+  build=$PWD/third_party/pjrt/build/$name
+
+  # This entry's wheels, a file and a sha256 per line.
+  pins=$(awk -v r="$release" '$1 == r || $1 == "all" { print $2, $3 }' <<<"$wheels")
+}
 
 # The prebuilt CPU tarballs, each a file and its sha256.
 prebuilt="
+mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 pjrt-cpu-jax-0.11.2-linux-x86_64.tar.gz e7f07bbdff2e67d1b0766c1a8f5632d39af7c0fcab72586de4928c25a5816692
 pjrt-cpu-jax-0.4.33-linux-x86_64.tar.gz 873129acd6df14c07f1e2b2ab0f0e616a763f00a38a7bfc56b918563e503c1a4
-mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 "
-# Where prebuilt tarballs come from: a directory, then a url.
-dist_dir=${FSIM_DIST_DIR:-/opt/fsim/dist}
-dist_url=${FSIM_DIST_URL:-}
+# The env image's copy of them.
+image_dist=/opt/fsim/dist
 
 # True when the file exists with this sha256.
 matches() { [ -f "$1" ] && echo "$2  $1" | sha256sum -c --status; }
@@ -188,150 +157,54 @@ fetch() {
   mv "$1.part" "$1"
 }
 
-# Fail unless the plugin exports GetPjrtApi.
-exports_api() {
-  nm -D --defined-only --without-symbol-versions "$1" | grep ' T GetPjrtApi$' >/dev/null || {
-    echo "pjrt: $so exports no GetPjrtApi" >&2
-    exit 1
-  }
+# Move a dist/ file's .part in, after its sidecar.
+seal() {
+  echo "$2  $1" >"$dist/$1.sha256"
+  mv "$dist/$1.part" "$dist/$1"
 }
 
-# Build the plugin from source, then pack it into dist/.
-build_plugin() {
-  local bz=("$build/bin/bazelisk" --output_user_root="$build/root")
-  local all=("${flags[@]}" --repo_env=HERMETIC_PYTHON_VERSION=3.12
-    --repository_cache="$build/cache/repos" --jobs=$(($(nproc) * 3 / 4))
-    --color=no --curses=no --show_progress_rate_limit=60
-    # Keep the GetPjrtApi object, and export it.
-    --linkopt=-Wl,--undefined=GetPjrtApi '--per_file_copt=.*xla/pjrt/c/pjrt_c_api_cpu\.cc@-fvisibility=default')
-  local label=@xla//xla/pjrt/c:$so
-  export HOME=$build/home XDG_CACHE_HOME=$build/cache BAZELISK_HOME=$build/cache/bazelisk
-  mkdir -p "$build/bin" "$HOME"
-  [ -x "$build/bin/bazelisk" ] || {
-    fetch "$build/bin/bazelisk" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/$bazelisk" "$bazelisk_sha"
-    chmod +x "$build/bin/bazelisk"
-  }
-
-  # The clone, checked against the tag's pinned commit.
-  [ -d "$build/jax" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$tag" https://github.com/jax-ml/jax.git "$build/jax"
-  [ "$(git -c safe.directory="$build/jax" -C "$build/jax" rev-parse HEAD)" = "$jax" ] || {
-    echo "$tag is not at $jax" >&2
-    exit 1
-  }
-
-  # Bazel refuses an output root another uid owns.
-  [ ! -d "$build/root" ] || chown -R "$(id -u):$(id -g)" "$build/root"
-  echo "pjrt: building $name, 1-2 h"
-  (
-    cd "$build/jax"
-    trap '"${bz[@]}" shutdown' EXIT
-    "${bz[@]}" build "${all[@]}" "$label"
-    mkdir -p "$build/$pack/lib"
-    cp "$("${bz[@]}" cquery "${all[@]}" --output=files "$label")" "$build/$pack/lib/"
-  )
-  # A plugin without GetPjrtApi never packs.
-  exports_api "$build/$pack/lib/$so"
-
-  # The tarball and its sidecar, then no build state.
+# Pack a build's directory into a dist/ tarball.
+pack_dir() {
   mkdir -p "$dist"
-  tar -czf "$tarball.part" -C "$build" "$pack"
-  mv "$tarball.part" "$tarball"
-  (cd "$dist" && sha256sum "$pack.tar.gz" >"$pack.tar.gz.sha256")
-  rm -rf "$build"
-  rmdir --ignore-fail-on-non-empty "$(dirname "$build")"
+  tar -czf "$dist/$2.tar.gz.part" -C "$1" "$2"
+  seal "$2.tar.gz" "$(sha256sum <"$dist/$2.tar.gz.part" | cut -c1-64)"
 }
 
-# Fetch the entry's wheels into dist/, then unpack the plugin and CUDA.
-unpack_wheels() {
-  local file sha project
-  mkdir -p "$dist"
-  while read -r file sha; do
-    # The wheel's PyPI project, from its file name.
-    project=${file%%-*}
-    project=${project//_/-}
-    matches "$dist/$file" "$sha" || fetch "$dist/$file" "https://files.pythonhosted.org/packages/py3/${project:0:1}/$project/$file" "$sha"
-  done <<<"$pins"
-
-  # The unpack, skipped when lib/ came from these wheels.
-  [ -f "$out/lib/$so" ] && cmp -s "$out/lib/wheels.txt" <(echo "$pins") && return
-  rm -rf "$out/lib" "$out/nvidia" "$out/wheel"
-  mkdir -p "$out/lib"
-  while read -r file sha; do
-    case "$file" in
-      jax_cuda12_pjrt-*)
-        python3 -I -m zipfile -e "$dist/$file" "$out/wheel"
-        cp "$out/wheel/jax_plugins/xla_cuda12/$so" "$out/lib/"
-        rm -rf "$out/wheel"
-        ;;
-      *) python3 -I -m zipfile -e "$dist/$file" "$out" ;;
-    esac
-  done <<<"$pins"
-  rm -rf "$out"/*.dist-info
-  # zipfile drops the mode bits, so ptxas would not run.
-  chmod +x "$out"/nvidia/*/bin/*
-  exports_api "$out/lib/$so"
-  echo "$pins" >"$out/lib/wheels.txt"
-}
-
-# Put a pinned prebuilt tarball and its sidecar into dist/, if one is offered.
-fetch_prebuilt() {
-  local file=$1 sha
-  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
-  [ -n "$sha" ] || return 0
-  mkdir -p "$dist"
-  if [ -f "$dist_dir/$file" ]; then
-    matches "$dist_dir/$file" "$sha" || {
-      echo "sha256 mismatch: $dist_dir/$file is not the pinned $sha" >&2
+# Put a tarball into dist/: kept, else the image's pinned copy, else a build.
+provide() {
+  local file=$1.tar.gz sha
+  # A kept tarball holds to its sidecar.
+  if [ -f "$dist/$file" ]; then
+    (cd "$dist" && sha256sum -c --status "$file.sha256") || {
+      echo "sha256 mismatch: $dist/$file" >&2
       exit 1
     }
-    echo "prebuilt: copying $dist_dir/$file"
-    cp "$dist_dir/$file" "$dist/$file.part"
-    mv "$dist/$file.part" "$dist/$file"
-  elif [ -n "$dist_url" ]; then
-    echo "prebuilt: fetching $dist_url/$file"
-    fetch "$dist/$file" "$dist_url/$file" "$sha"
-  else
-    return 0
-  fi
-  echo "$sha  $file" >"$dist/$file.sha256"
-}
-
-# Fail unless a dist/ tarball matches its sidecar.
-verify_tarball() {
-  (cd "$dist" && sha256sum -c --status "$1.sha256") || {
-    echo "sha256 mismatch: $dist/$1" >&2
-    exit 1
-  }
-}
-
-# Set up the entry: its header, then its plugin.
-setup_pjrt() {
-  # The header, skipped when already pinned.
-  if ! matches "$header" "$header_sha"; then
-    mkdir -p "$(dirname "$header")"
-    fetch "$header" "https://raw.githubusercontent.com/openxla/xla/$xla/xla/pjrt/c/pjrt_c_api.h" "$header_sha"
-  fi
-
-  # A -cuda12 plugin from its wheels.
-  if [ "$so" = xla_cuda_plugin.so ]; then
-    unpack_wheels
-    echo "pjrt: $header $out/lib/$so"
     return
   fi
-
-  # The plugin, prebuilt or built only when dist/ lacks its tarball.
-  [ -f "$tarball" ] || fetch_prebuilt "$pack.tar.gz"
-  [ -f "$tarball" ] || build_plugin
-  verify_tarball "$pack.tar.gz"
-
-  # The unpack, skipped when lib/ came from this tarball.
-  if ! { [ -f "$out/lib/$so" ] && cmp -s "$tarball.sha256" "$out/lib/$pack.tar.gz.sha256"; }; then
-    rm -rf "$out/lib"
-    mkdir -p "$out/lib"
-    tar -xzf "$tarball" --no-same-owner --strip-components=2 -C "$out/lib" "$pack/lib/$so"
-    cp "$tarball.sha256" "$out/lib/"
+  # The image's copy, when pinned, holds to its pin.
+  sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
+  if [ -n "$sha" ] && [ -f "$image_dist/$file" ]; then
+    matches "$image_dist/$file" "$sha" || {
+      echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
+      exit 1
+    }
+    echo "prebuilt: copying $image_dist/$file"
+    mkdir -p "$dist"
+    cp "$image_dist/$file" "$dist/$file.part"
+    seal "$file" "$sha"
+    return
   fi
-  echo "pjrt: $header $out/lib/$so"
+  "$2"
+}
+
+# Unpack a dist/ tarball into a dir, skipped when the dir came from it.
+unpack() {
+  local tarball=$dist/$1.tar.gz
+  cmp -s "$tarball.sha256" "$2/$1.tar.gz.sha256" && return
+  rm -rf "$2"
+  mkdir -p "$2"
+  tar -xzf "$tarball" --no-same-owner --strip-components="$3" -C "$2"
+  cp "$tarball.sha256" "$2/"
 }
 
 # Fetch one commit of a GitHub repo, refetched unless at the pin.
@@ -342,10 +215,6 @@ fetch_commit() {
     git init -q "$2"
     "${git[@]}" fetch -q --depth 1 "https://github.com/$1.git" "$3"
     "${git[@]}" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  }
-  [ "$("${git[@]}" rev-parse HEAD)" = "$3" ] || {
-    echo "$2 is not at $3" >&2
-    exit 1
   }
 }
 
@@ -388,29 +257,112 @@ build_mlir() {
   find "$bin/lib" -maxdepth 1 -name '*.a' ! -name '*TableGen*' ! -name '*Tblgen*' -exec cp -t "$to/lib" {} +
   printf 'stablehlo %s %s\nllvm %s\n' "$stablehlo_tag" "$stablehlo" "$llvm" >"$to/pins.txt"
 
-  # The tarball and its sidecar, then no build state.
-  mkdir -p "$dist"
-  tar -czf "$mlir_tarball.part" -C "$mlir_build" "$mlir_pack"
-  printf '%s  %s\n' "$(sha256sum <"$mlir_tarball.part" | cut -d' ' -f1)" "$mlir_pack.tar.gz" >"$mlir_tarball.sha256"
-  mv "$mlir_tarball.part" "$mlir_tarball"
+  # The tarball, then no build state.
+  pack_dir "$mlir_build" "$mlir_pack"
   rm -rf "$mlir_build"
 }
 
-# Set up the toolchain, prebuilt or built only when dist/ lacks its tarball.
+# Set up the toolchain from its tarball.
 setup_mlir() {
-  [ -f "$mlir_tarball" ] || fetch_prebuilt "$mlir_pack.tar.gz"
-  [ -f "$mlir_tarball" ] || build_mlir
-  verify_tarball "$mlir_pack.tar.gz"
-
-  # The unpack, skipped when lib/ came from this tarball.
-  if ! { [ -d "$mlir/lib" ] && cmp -s "$mlir_tarball.sha256" "$mlir/$mlir_pack.tar.gz.sha256"; }; then
-    rm -rf "$mlir/include" "$mlir/lib" "$mlir/pins.txt"
-    mkdir -p "$mlir"
-    tar -xzf "$mlir_tarball" --no-same-owner --strip-components=1 -C "$mlir"
-    cp "$mlir_tarball.sha256" "$mlir/"
-  fi
+  provide "$mlir_pack" build_mlir
+  unpack "$mlir_pack" "$mlir" 1
   echo "mlir: $mlir/include $mlir/lib"
 }
 
-[ -z "$want_pjrt" ] || setup_pjrt
-[ -z "$want_mlir" ] || setup_mlir
+# Build the plugin from source, then pack it into dist/.
+build_plugin() {
+  local bz=("$build/bin/bazelisk" --output_user_root="$build/root")
+  local all=("${flags[@]}" --repo_env=HERMETIC_PYTHON_VERSION=3.12
+    --repository_cache="$build/cache/repos" --jobs=$(($(nproc) * 3 / 4))
+    --color=no --curses=no --show_progress_rate_limit=60
+    # Keep the GetPjrtApi object, and export it.
+    --linkopt=-Wl,--undefined=GetPjrtApi '--per_file_copt=.*xla/pjrt/c/pjrt_c_api_cpu\.cc@-fvisibility=default')
+  local label=@xla//xla/pjrt/c:$so
+  mkdir -p "$build/bin"
+  [ -x "$build/bin/bazelisk" ] || {
+    fetch "$build/bin/bazelisk" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64" "$bazelisk_sha"
+    chmod +x "$build/bin/bazelisk"
+  }
+
+  # The jax workspace at its tag's commit.
+  fetch_commit jax-ml/jax "$build/jax" "$jax"
+
+  # Bazel refuses an output root another uid owns.
+  [ ! -d "$build/root" ] || chown -R "$(id -u):$(id -g)" "$build/root"
+  echo "pjrt: building $name, 1-2 h"
+  (
+    # Bazel's homes, in this subshell only.
+    export HOME=$build/home XDG_CACHE_HOME=$build/cache BAZELISK_HOME=$build/cache/bazelisk
+    mkdir -p "$HOME"
+    cd "$build/jax"
+    trap '"${bz[@]}" shutdown' EXIT
+    "${bz[@]}" build "${all[@]}" "$label"
+    mkdir -p "$build/$pack/lib"
+    cp "$("${bz[@]}" cquery "${all[@]}" --output=files "$label")" "$build/$pack/lib/"
+  )
+  # A plugin without GetPjrtApi never packs.
+  nm -D --defined-only --without-symbol-versions "$build/$pack/lib/$so" | grep ' T GetPjrtApi$' >/dev/null || {
+    echo "pjrt: $so exports no GetPjrtApi" >&2
+    exit 1
+  }
+
+  # The tarball, then no build state.
+  pack_dir "$build" "$pack"
+  rm -rf "$build"
+  rmdir --ignore-fail-on-non-empty "$(dirname "$build")"
+}
+
+# Fetch the entry's wheels into dist/, then unpack the plugin and CUDA.
+unpack_wheels() {
+  local file sha project
+  mkdir -p "$dist"
+  while read -r file sha; do
+    # The wheel's PyPI project, from its file name.
+    project=${file%%-*}
+    project=${project//_/-}
+    matches "$dist/$file" "$sha" || fetch "$dist/$file" "https://files.pythonhosted.org/packages/py3/${project:0:1}/$project/$file" "$sha"
+  done <<<"$pins"
+
+  # The unpack, skipped when lib/ came from these wheels.
+  [ -f "$out/lib/$so" ] && cmp -s "$out/lib/wheels.txt" <(echo "$pins") && return
+  rm -rf "$out/lib" "$out/nvidia" "$out/wheel"
+  mkdir -p "$out/lib"
+  while read -r file sha; do
+    case "$file" in
+      jax_cuda12_pjrt-*)
+        python3 -I -m zipfile -e "$dist/$file" "$out/wheel"
+        cp "$out/wheel/jax_plugins/xla_cuda12/$so" "$out/lib/"
+        rm -rf "$out/wheel"
+        ;;
+      *) python3 -I -m zipfile -e "$dist/$file" "$out" ;;
+    esac
+  done <<<"$pins"
+  rm -rf "$out"/*.dist-info
+  # zipfile drops the mode bits, so ptxas would not run.
+  chmod +x "$out"/nvidia/*/bin/*
+  echo "$pins" >"$out/lib/wheels.txt"
+}
+
+# Set up the entry: its header, then its plugin.
+setup_pjrt() {
+  # The header, skipped when already pinned.
+  if ! matches "$header" "$header_sha"; then
+    mkdir -p "$(dirname "$header")"
+    fetch "$header" "https://raw.githubusercontent.com/openxla/xla/$xla/xla/pjrt/c/pjrt_c_api.h" "$header_sha"
+  fi
+
+  # A -cuda12 plugin from its wheels, a -cpu one from its tarball.
+  if [ "$so" = xla_cuda_plugin.so ]; then
+    unpack_wheels
+  else
+    provide "$pack" build_plugin
+    unpack "$pack" "$out/lib" 2
+  fi
+  echo "pjrt: $header $out/lib/$so"
+}
+
+[ -z "$toolchain" ] || setup_mlir
+for name in "${plugins[@]}"; do
+  select_entry "$name"
+  setup_pjrt
+done

@@ -4,16 +4,12 @@ set -euo pipefail
 # Change to script directory
 cd "$(dirname "$0")"
 
-# Detect architecture
-case "$(uname -m)" in
-  x86_64) ARCH="amd64" ;;
-  aarch64) ARCH="arm64" ;;
-  *)
-    echo "Error: Unsupported architecture: $(uname -m)"
-    exit 1
-    ;;
-esac
-IMAGE_NAME="fsim-lib:latest-${ARCH}"
+# Refuse a non-x86_64 host
+[ "$(uname -m)" = x86_64 ] || {
+  echo "Error: fsim-lib runs on x86_64 only, not $(uname -m)"
+  exit 1
+}
+IMAGE_NAME="fsim-lib:latest-amd64"
 
 # collect candidate containers (all containers using the image)
 mapfile -t CONTAINERS < <(docker ps -a --format '{{.ID}} {{.Names}} {{.Image}} {{.Status}}' | awk -v img="${IMAGE_NAME}" '$3 == img')

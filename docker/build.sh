@@ -5,21 +5,17 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./fsim-env.env
 
-# Detect architecture
-case "$(uname -m)" in
-  x86_64) ARCH="amd64" ;;
-  aarch64) ARCH="arm64" ;;
-  *)
-    echo "Error: Unsupported architecture: $(uname -m)"
-    exit 1
-    ;;
-esac
+# Refuse a non-x86_64 host
+[ "$(uname -m)" = x86_64 ] || {
+  echo "Error: fsim-lib runs on x86_64 only, not $(uname -m)"
+  exit 1
+}
 DOCKERFILE="Dockerfile"
-IMAGE_NAME="fsim-lib:latest-${ARCH}"
+IMAGE_NAME="fsim-lib:latest-amd64"
 BASE_OS="ubuntu:24.04"
 # The env image to pull, and the one --env builds
-ENV_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_TAG}-${ARCH}"
-ENV_BUILD_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_BUILD_TAG}-${ARCH}"
+ENV_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_TAG}-amd64"
+ENV_BUILD_IMAGE_NAME="devanshdvj/fsim-lib-env:${FSIM_ENV_BUILD_TAG}-amd64"
 # The CPU tarballs the env bakes in, from the library's dist/
 DIST_DIR="../fsim/third_party/dist"
 
@@ -104,18 +100,15 @@ if [ "${ENV_ONLY}" -eq 1 ]; then
   IMAGE_NAME="${ENV_BUILD_IMAGE_NAME}"
 fi
 
-# The tarballs: every one setup.sh pins prebuilt for this arch
-TARBALLS=()
-for f in $(sed -n '/^prebuilt="$/,/^"$/s/^\([^ ]*\) [0-9a-f]\{64\}$/\1/p' ../fsim/setup.sh); do
-  [[ "${f}" != *"-linux-$(uname -m).tar.gz" ]] || TARBALLS+=("${f}")
-done
+# The tarballs: every one setup.sh pins prebuilt
+mapfile -t TARBALLS < <(sed -n '/^prebuilt="$/,/^"$/s/^\([^ ]*\) [0-9a-f]\{64\}$/\1/p' ../fsim/setup.sh)
 MISSING=()
 for f in "${TARBALLS[@]}"; do
   [ -f "${DIST_DIR}/${f}" ] || MISSING+=("${f}")
 done
 # A release env holds every tarball
 if [ "${ENV_ONLY}" -eq 1 ] && [ "${#MISSING[@]}" -gt 0 ]; then
-  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh with its --pjrt or --mlir builds each. Aborting."
+  echo "Error: fsim/third_party/dist/ lacks ${MISSING[*]}; ./scripts/setup.sh puts each there. Aborting."
   exit 1
 fi
 
