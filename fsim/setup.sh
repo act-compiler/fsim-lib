@@ -6,8 +6,7 @@
 # A -cuda12 plugin and its CUDA come from PyPI wheels, pinned by sha256 and kept in dist/.
 # The toolchain is MLIR and StableHLO's static libraries and headers at StableHLO's pins,
 # unpacked the same way, with a build from source; a build packs the tarball into dist/.
-# A prebuilt tarball is pinned by sha256 and copied into dist/ from $FSIM_DIST_DIR
-# (default /opt/fsim/dist), else fetched from $FSIM_DIST_URL when that is set.
+# A prebuilt tarball is pinned by sha256 and copied into dist/ from /opt/fsim/dist.
 #   ./fsim/setup.sh [--pjrt NAME] [--mlir]
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,7 +23,7 @@ usage() {
   echo "  --pjrt fetches the entry's header, then unpacks its plugin from third_party/dist/:"
   echo "  a -cpu tarball, built there first when absent, or -cuda12 wheels, fetched there first"
   echo "  --mlir unpacks the toolchain's tarball from third_party/dist/, built there first when absent"
-  echo "  an absent tarball first comes prebuilt from \$FSIM_DIST_DIR or \$FSIM_DIST_URL when pinned"
+  echo "  an absent tarball first comes prebuilt from /opt/fsim/dist when pinned"
   echo "  no flag sets up the default entry and the toolchain"
 }
 
@@ -143,9 +142,8 @@ pjrt-cpu-jax-0.11.2-linux-x86_64.tar.gz e7f07bbdff2e67d1b0766c1a8f5632d39af7c0fc
 pjrt-cpu-jax-0.4.33-linux-x86_64.tar.gz 873129acd6df14c07f1e2b2ab0f0e616a763f00a38a7bfc56b918563e503c1a4
 mlir-v1.20.0-linux-x86_64.tar.gz e3e2be748e1e8f7560d6a85a916df05d9b268e724538b89731d013de82f724fa
 "
-# Where prebuilt tarballs come from: a directory, then a url.
-dist_dir=${FSIM_DIST_DIR:-/opt/fsim/dist}
-dist_url=${FSIM_DIST_URL:-}
+# The env image's copy of them.
+image_dist=/opt/fsim/dist
 
 # True when the file exists with this sha256.
 matches() { [ -f "$1" ] && echo "$2  $1" | sha256sum -c --status; }
@@ -249,22 +247,15 @@ unpack_wheels() {
 fetch_prebuilt() {
   local file=$1 sha
   sha=$(awk -v f="$file" '$1 == f { print $2 }' <<<"$prebuilt")
-  [ -n "$sha" ] || return 0
+  [ -n "$sha" ] && [ -f "$image_dist/$file" ] || return 0
+  matches "$image_dist/$file" "$sha" || {
+    echo "sha256 mismatch: $image_dist/$file is not the pinned $sha" >&2
+    exit 1
+  }
+  echo "prebuilt: copying $image_dist/$file"
   mkdir -p "$dist"
-  if [ -f "$dist_dir/$file" ]; then
-    matches "$dist_dir/$file" "$sha" || {
-      echo "sha256 mismatch: $dist_dir/$file is not the pinned $sha" >&2
-      exit 1
-    }
-    echo "prebuilt: copying $dist_dir/$file"
-    cp "$dist_dir/$file" "$dist/$file.part"
-    mv "$dist/$file.part" "$dist/$file"
-  elif [ -n "$dist_url" ]; then
-    echo "prebuilt: fetching $dist_url/$file"
-    fetch "$dist/$file" "$dist_url/$file" "$sha"
-  else
-    return 0
-  fi
+  cp "$image_dist/$file" "$dist/$file.part"
+  mv "$dist/$file.part" "$dist/$file"
   echo "$sha  $file" >"$dist/$file.sha256"
 }
 
