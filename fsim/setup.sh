@@ -82,9 +82,8 @@ case "$name" in
     exit 1
     ;;
 esac
-# The jax release, which names the tag, the tarball and the wheels.
+# The jax release, which names the tarball and the wheels.
 release=${name%-*}
-tag=jax-v${release#jax-}
 
 # The bazelisk pin.
 bazelisk_sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
@@ -180,12 +179,8 @@ build_plugin() {
     chmod +x "$build/bin/bazelisk"
   }
 
-  # The clone, checked against the tag's pinned commit.
-  [ -d "$build/jax" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$tag" https://github.com/jax-ml/jax.git "$build/jax"
-  [ "$(git -c safe.directory="$build/jax" -C "$build/jax" rev-parse HEAD)" = "$jax" ] || {
-    echo "$tag is not at $jax" >&2
-    exit 1
-  }
+  # The jax workspace at its tag's commit.
+  fetch_commit jax-ml/jax "$build/jax" "$jax"
 
   # Bazel refuses an output root another uid owns.
   [ ! -d "$build/root" ] || chown -R "$(id -u):$(id -g)" "$build/root"
@@ -314,10 +309,6 @@ fetch_commit() {
     git init -q "$2"
     "${git[@]}" fetch -q --depth 1 "https://github.com/$1.git" "$3"
     "${git[@]}" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  }
-  [ "$("${git[@]}" rev-parse HEAD)" = "$3" ] || {
-    echo "$2 is not at $3" >&2
-    exit 1
   }
 }
 
