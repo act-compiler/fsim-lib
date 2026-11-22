@@ -321,11 +321,24 @@ void Module::write(const View &v, int value) {
   if (types_[value].count() != v.count() || types_[value].elem != mlir(v.dtype))
     fail("a write of " + types_[value].str() + " through a view of " + std::to_string(v.count()) +
          " " + mlir(v.dtype));
+  // A zero-stride entry keeps its last element in flat order, as nki.simulate leaves it.
+  View last = v;
+  std::vector<int64_t> start;
+  for (Entry &e : last.pattern) {
+    bool broadcast = e.stride == 0 && e.count > 1;
+    start.push_back(broadcast ? e.count - 1 : 0);
+    if (broadcast)
+      e.count = 1;
+  }
+  if (last.count() != v.count()) {
+    int kept =
+        slice(reshape(value, v.shape()), start, v.shape(), std::vector<int64_t>(start.size(), 1));
+    write(last, reshape(kept, last.shape()));
+    return;
+  }
   int t = bitcastTo(v.arena, v.dtype);
   std::vector<int64_t> d = types_[t].dims;
   Geometry g = geometry(v, d[1]);
-  if (g.spread || g.broadcast)
-    fail("a write through a broadcast view");
   // The value's kept dims to sorted order.
   if (!g.order.empty()) {
     std::vector<int64_t> dims(g.kept.size() + 1, g.pc), perm = {0};
