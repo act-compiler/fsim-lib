@@ -137,6 +137,53 @@ mlir::LogicalResult transpose(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
+// The values with the batch dimension's entry in front.
+llvm::SmallVector<int64_t> leading(int64_t first, llvm::ArrayRef<int64_t> values) {
+  llvm::SmallVector<int64_t> result{first};
+  result.append(values.begin(), values.end());
+  return result;
+}
+
+// A 0-d operand must stay unbatched; a batched one is refused.
+mlir::LogicalResult scalar(Batching &batching, mlir::Operation *op, mlir::ValueRange values,
+                           llvm::StringRef role) {
+  for (mlir::Value value : values)
+    if (batching.isBatched(value))
+      return mlir::emitError(op->getLoc())
+             << "no vmap rule for a batched " << role << " of " << op->getName();
+  return mlir::success();
+}
+
+// The batch dimension slices whole: start 0, limit B, stride 1.
+mlir::LogicalResult slice(Batching &batching, mlir::Operation *op) {
+  auto slice = mlir::cast<hlo::SliceOp>(op);
+  slice.setStartIndices(leading(0, slice.getStartIndices()));
+  slice.setLimitIndices(leading(batching.batch_size, slice.getLimitIndices()));
+  slice.setStrides(leading(1, slice.getStrides()));
+  batching.batchOperand(op, 0);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
+// The scalar start indices take a leading 0 for the batch dimension.
+mlir::LogicalResult dynamicUpdateSlice(Batching &batching, mlir::Operation *op) {
+  auto update = mlir::cast<hlo::DynamicUpdateSliceOp>(op);
+  if (mlir::failed(scalar(batching, op, update.getStartIndices(), "start index")))
+    return mlir::failure();
+  batching.batchOperand(op, 0);
+  batching.batchOperand(op, 1);
+  mlir::Type index = update.getStartIndices().front().getType();
+  batching.builder.setInsertionPoint(op);
+  mlir::Value zero =
+      hlo::ConstantOp::create(batching.builder, op->getLoc(),
+                              mlir::cast<mlir::ElementsAttr>(batching.builder.getZeroAttr(index)));
+  llvm::SmallVector<mlir::Value> operands{op->getOperand(0), op->getOperand(1), zero};
+  operands.append(update.getStartIndices().begin(), update.getStartIndices().end());
+  op->setOperands(operands);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // Every result batched.
 mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
   for (unsigned i = 0; i < op->getNumOperands(); ++i)
@@ -151,6 +198,8 @@ const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::BroadcastInDimOp::getOperationName(), broadcastInDim},
     {hlo::ReshapeOp::getOperationName(), reshape},
     {hlo::TransposeOp::getOperationName(), transpose},
+    {hlo::SliceOp::getOperationName(), slice},
+    {hlo::DynamicUpdateSliceOp::getOperationName(), dynamicUpdateSlice},
     {hlo::BitcastConvertOp::getOperationName(), reshape},
     {mlir::func::ReturnOp::getOperationName(), ret},
 };
