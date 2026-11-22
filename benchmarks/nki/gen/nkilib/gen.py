@@ -1,9 +1,12 @@
 # Generates the nkilib cases into benchmarks/nki/<name>/.
 # Each case folder gets kernel.neff, inputs/<tensor>.bin and golden/<tensor>.bin,
 # named after the kernel's tensors; compiler artifacts go to a per-case work dir, then discarded.
+# Each .bin holds its tensor of each of the case's M seeded input sets, back to back;
+# input set 0 alone is compiled and recorded.
 # Run in the nki env with its bin on PATH; the first failing case stops it.
 #   gen.py [names...]    every case when none is named
 import glob
+import math
 import os
 import shutil
 import sys
@@ -26,6 +29,8 @@ from tracing import record_trace
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 # Fixed per-case compile dir, so the NEFF's recorded path never varies.
 WORK = os.path.join(tempfile.gettempdir(), 'nkilib-gen')
+# Input-set count M by one input set's inputs plus golden bytes: (under bytes, M).
+INPUT_SET_COUNTS = [(1 << 20, 32), (16 << 20, 16), (64 << 20, 8), (256 << 20, 4), (math.inf, 2)]
 
 
 def tensor_file(case_dir, sub, name):
@@ -67,9 +72,16 @@ def golden(b, dtype, shape):
     return res.astype(dtype).reshape(shape)
 
 
-def write(path, a):
+def append(path, a):
+    # Input set s's tensor lands at s times one tensor's bytes.
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.ascontiguousarray(a).tofile(path)
+    with open(path, 'ab') as f:
+        np.ascontiguousarray(a).tofile(f)
+
+
+def signature(b):
+    # What input set 0's record fixes: kernel, kwargs, tensor names, dtypes and shapes.
+    return b.kernel, b.kwargs, [(n, a.dtype, a.shape) for n, a in b.tensors.items()]
 
 
 def generate(c):
@@ -94,14 +106,28 @@ def generate(c):
     finally:
         shutil.rmtree(work, ignore_errors=True)
     t_record = record_trace(b, out)
-    for n, a in b.tensors.items():
-        write(tensor_file(out, 'inputs', n), a)
     t0 = time.perf_counter()
     dt, shape = np_dtype(spec.dtype), tuple(spec.shape)
-    write(tensor_file(out, 'golden', spec.name), golden(b, dt, shape))
-    t_golden = time.perf_counter() - t0
+    fixed = signature(b)
+    # The input-set count M by one input set's inputs and golden bytes.
+    nbytes = sum(a.nbytes for a in b.tensors.values()) + dt.itemsize * math.prod(shape)
+    input_sets = next(n for bound, n in INPUT_SET_COUNTS if nbytes < bound)
+    for s in range(input_sets):
+        if s:
+            # A later input set has only its tensor contents regenerated, from seed + s.
+            b = BUILDERS[c['kernel']](c, Rand(c['seed'] + s))
+            if signature(b) != fixed:
+                raise ValueError(
+                    f'input set {s} differs from input set 0 in kernel, kwargs, dtypes or shapes'
+                )
+        for n, a in b.tensors.items():
+            append(tensor_file(out, 'inputs', n), a)
+        append(tensor_file(out, 'golden', spec.name), golden(b, dt, shape))
+        # One input set in memory at a time.
+        b = a = None
+    t_input_sets = time.perf_counter() - t0
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(out) for f in fs)
-    tensors = {n: ('input', a.dtype, a.shape) for n, a in b.tensors.items()}
+    tensors = {n: ('input', t, dims) for n, t, dims in fixed[2]}
     tensors[spec.name] = ('output', dt, shape)
     io_desc = ' '.join(f'{k[0]}:{n}:{dt}{list(s)}' for n, (k, dt, s) in sorted(tensors.items()))
     neff_b = os.path.getsize(os.path.join(out, 'kernel.neff'))
@@ -109,7 +135,7 @@ def generate(c):
     print(
         f'OK {c["name"]} compile_s={t_compile:.1f} neff_b={neff_b} '
         f'record_s={t_record:.1f} trace_b={trace_b} '
-        f'golden_s={t_golden:.2f} disk_b={size} {io_desc}',
+        f'input_sets={input_sets} input_sets_s={t_input_sets:.2f} disk_b={size} {io_desc}',
         flush=True,
     )
 

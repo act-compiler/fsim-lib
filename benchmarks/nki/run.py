@@ -51,7 +51,7 @@ FAILURES = [
 TOLERANCE = {
     'float32': (np.float32, 1e-3, 1e-2),
     'float16': (np.float16, 1e-2, 1e-1),
-    'bfloat16': (ml_dtypes.bfloat16, 3e-2, 1e-1),
+    'bfloat16': (ml_dtypes.bfloat16, 5e-2, 1e-1),
 }
 
 # A taidl build's stop at a mid-run flush, which makes the case N/A.

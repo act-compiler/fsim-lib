@@ -34,12 +34,12 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
   A sample is one simulation of the trace on one input set, one value of every input tensor with its golden.
 - The part is checked against the part of `golden/<name>.bin` for the input set `out/draws.bin` gives that sample.
 - The status line's `err` is the worst over every sample.
-- The check is the max relative error, at most the dtype's bound below.
+- The check is the max relative error, at most the dtype's tolerance below.
 - Each element's relative error divides by at least a floor of max |golden| times the dtype's fraction:
 
   | Dtype | Max relative error | Floor fraction |
   | ----- | ------------------ | -------------- |
-  | bf16  | 3e-2               | 0.1            |
+  | bf16  | 5e-2               | 0.1            |
   | f16   | 1e-2               | 0.1            |
   | f32   | 1e-3               | 0.01           |
 

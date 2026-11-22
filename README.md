@@ -89,6 +89,9 @@ Each `matmul` case is `tensor_c = tensor_a @ tensor_b` in fp16 at one `MxKxN`, i
 - It records the kernel through `drivers/nki/record` into `kernel.trace`, the file `fsim-nki` reads.
 - It writes the seeded inputs to `inputs/<tensor>.bin` and the reference output to `golden/<tensor>.bin`.
 - A `nkilib` case's reference is nkilib's torch reference, and a `matmul` case's is an fp32 matmul cast to fp16.
+- A `nkilib` case's `.bin` files hold its seeded input sets: an input set is one value of every input tensor, with its golden.
+  Each file holds its tensor from each of the case's input sets, back to back.
+  gen compiles and records input set 0 alone.
 - Each `xfail` case breaks one trn2 memory limit at an explicit address, and gen writes only its `kernel.trace` and inputs.
   Its gen line logs the compiler's rejection and whether `nki.simulate` runs it, and a compile that succeeds fails the case.
 - git ignores the generated files.
