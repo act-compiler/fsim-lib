@@ -126,7 +126,7 @@ A sample is one simulation of the trace on one input set.
 - A simulation error marks its case `failing`, with the error in its log, and the run goes on.
 - The run exits nonzero unless every case is `match` or `xfail`.
 
-The status line also gives the case's worst relative error, `err`, and the fields of the last `fsim stats:` line in its log, times in seconds; [fsim/README.md](fsim/README.md) defines them:
+The status line also gives the case's worst relative error, `err`, and these fields of the last `fsim stats:` line in its log, times in seconds; [fsim/README.md](fsim/README.md) defines them:
 
 | Field              | Meaning                                                               |
 | ------------------ | --------------------------------------------------------------------- |

@@ -126,7 +126,7 @@ The pipeline clocks the run from its construction, or from the last `Pipeline::b
   A driver that begins a next trace prints one line per trace, then a last one.
 
 ```text
-fsim stats: tracing=<s> overhead=<s> simulation=<s> tracing_overhead=<s> compile_overhead=<s> wall=<s> trace=<n> modules=<n>
+fsim stats: tracing=<s> overhead=<s> simulation=<s> tracing_overhead=<s> compile_overhead=<s> wall=<s> trace=<n> modules=<n> samples=<n> batch_size=<n>
 ```
 
 Times are seconds to 3 decimals, and a value not yet known prints `-`:
@@ -141,6 +141,8 @@ Times are seconds to 3 decimals, and a value not yet known prints `-`:
 | `wall`             | the clock at `summary`, less every `exclude`                    | any `sync`, failed or not |
 | `trace`            | `end_trace`'s instruction count                                 | `end_trace`               |
 | `modules`          | the submitted module count                                      | a clean `sync` of modules |
+| `samples`          | the samples simulated, `B` per batch, a driver's padding too    | construction, each batch  |
+| `batch_size`       | the batch size the pipeline runs at                             | construction              |
 
 - A clean `sync` of modules returned, with at least one module submitted and no submit, replay or `end_trace` since.
 - Outside `overlap`, `submit` compiles and runs its module, so a submit inside the trace counts in `tracing`.

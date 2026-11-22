@@ -65,7 +65,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 A run's evaluation log is fsim's summary line, here an `rmsnorm_tkg` case's under `overlap`:
 
 ```
-fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003 compile_overhead=0.063 wall=0.073 trace=11 modules=1
+fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003 compile_overhead=0.063 wall=0.073 trace=11 modules=1 samples=1 batch_size=1
 ```
 
 - [fsim/README.md](../../fsim/README.md) defines its fields.

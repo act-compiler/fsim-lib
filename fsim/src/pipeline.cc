@@ -118,6 +118,7 @@ struct Pipeline::Impl {
   bool synced = false;    // a sync() has run
   bool settled = false;   // the last sync() returned, no submit or replay since
   bool mid_trace = false; // a sync before end_trace has run
+  size_t replays = 0;     // replays run
   size_t retraces = 0;    // traces after the first
   size_t first = 0;       // the current trace's first module
 
@@ -616,6 +617,7 @@ void Pipeline::replay() {
     impl_->error = std::current_exception();
     throw;
   }
+  ++impl_->replays;
 }
 
 void Pipeline::exclude(double ms) {
@@ -679,7 +681,9 @@ void Pipeline::summary(std::ostream &out) const {
   out << "fsim stats: tracing=" << seconds(impl_->tracing_ms) << " overhead=" << seconds(overhead)
       << " simulation=" << seconds(simulation) << " tracing_overhead=" << seconds(tracing_overhead)
       << " compile_overhead=" << seconds(compile) << " wall=" << seconds(wall) << " trace=" << trace
-      << " modules=" << modules << "\n";
+      << " modules=" << modules
+      << " samples=" << impl_->batch_size * (1 + impl_->replays + impl_->retraces)
+      << " batch_size=" << impl_->batch_size << "\n";
   // A killed run keeps the line.
   out.flush();
 }

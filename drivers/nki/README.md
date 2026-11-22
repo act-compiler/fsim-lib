@@ -32,7 +32,7 @@ Paths here are relative to the repo root.
 - `fsim-nki` ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
 
   ```
-  fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003 compile_overhead=0.063 wall=0.073 trace=11 modules=1
+  fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003 compile_overhead=0.063 wall=0.073 trace=11 modules=1 samples=1 batch_size=1
   ```
 
 - `--trigger`, `--overlap` and `--num-samples` are the library's knobs, and `--sampling` the driver's.

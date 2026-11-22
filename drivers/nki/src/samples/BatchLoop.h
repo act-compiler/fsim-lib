@@ -1,6 +1,7 @@
 // The batch loop: --num-samples N samples over the case's input sets, in batches of B.
 // The first batch traces into a pipeline at batch size B; later batches replay its executables.
 // Above one sample, a trace with a +s() offset runs at a batch size of 1, each sample alone.
+// The last summary line covers every sample.
 #pragma once
 
 #include <cstddef>
