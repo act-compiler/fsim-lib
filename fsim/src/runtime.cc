@@ -47,7 +47,7 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   init.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
   impl_->check(api->PJRT_Plugin_Initialize(&init), "PJRT_Plugin_Initialize");
 
-  // One client: the cpu plugin's over one device, the gpu plugin's on its defaults.
+  // One client: cpu over one device, custom-gpu at 95% of total memory, else defaults.
   PJRT_Client_Create_Args create{};
   create.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
 #ifdef FSIM_DEVICE_CPU
@@ -59,6 +59,18 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   devices.int64_value = 1;
   devices.value_size = 1;
   create.create_options = &devices;
+  create.num_options = 1;
+#endif
+#if defined(FSIM_COMPILER_CUSTOM) && defined(FSIM_DEVICE_GPU)
+  // The allocator's limit is 95% of total GPU memory.
+  PJRT_NamedValue fraction{};
+  fraction.struct_size = PJRT_NamedValue_STRUCT_SIZE;
+  fraction.name = "memory_fraction";
+  fraction.name_size = std::strlen(fraction.name);
+  fraction.type = PJRT_NamedValue_kFloat;
+  fraction.float_value = 0.95f;
+  fraction.value_size = 1;
+  create.create_options = &fraction;
   create.num_options = 1;
 #endif
   impl_->check(api->PJRT_Client_Create(&create), "PJRT_Client_Create");

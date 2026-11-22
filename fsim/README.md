@@ -37,6 +37,8 @@ The compiler picks the entry whose header the library builds against and whose p
 - The configure fails when the entry's plugin is not set up.
 - A CPU build runs on one CPU device, and a GPU build on the first device the plugin reports.
 - A `jax-0.11.2-cuda12` build first loads the CUDA libraries jax preloads, from its entry's `nvidia/`.
+- A `custom-gpu` build creates its client with `memory_fraction` 0.95, its allocator limited to 95% of total GPU memory, the device limit `Pipeline::batch_size` uses.
+  The `xla-` GPU builds keep the plugin's default.
 
 Each compiler compiles with these XLA option overrides:
 
