@@ -10,6 +10,7 @@ add_executable(fsim-nki
   src/accelerator/Accelerator.cpp
   src/accelerator/Limits.cpp
   src/isa/Activation.cpp
+  src/isa/AffineSelect.cpp
   src/isa/DmaCopy.cpp
   src/isa/Instruction.cpp
   src/isa/Memset.cpp

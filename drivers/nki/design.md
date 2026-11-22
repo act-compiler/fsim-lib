@@ -348,6 +348,10 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - That f32 convert is lossless for bf16 and f32, apart from NaN payloads.
 - It writes in flat order, as nki.simulate does, so `[128,1,64]` takes `[128,64]`.
 - The docs bar GpSimd from PSUM; nki.simulate ignores `engine`, and so does the driver.
+- `affine_select` compares `offset + channel_id * channel_multiplier` plus the pattern's index with 0 by `cmp_op`, then takes `on_true_tile` or `on_false_value` ([nki.isa.affine_select](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.affine_select.html)).
+- `channel_id` counts from `dst`'s first partition, as nki.simulate counts it.
+- It selects in f32 and converts to `dst`'s dtype for every dtype pair, as nki.simulate does; the docs cast through f32 only when the dtypes differ.
+- The docs put `dst` and `on_true_tile` in SBUF, and the driver refuses any other arena.
 - A write through a zero-stride view keeps, per element, the value last in flat order, as nki.simulate leaves it.
 - The suite reaches such a write in qkv_cte's `activation` into a scratch tile.
 
@@ -365,9 +369,10 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert               |
 | `nc_matmul`           | all but rope and cumsum                                 |
 | `tensor_copy`         | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
+| `affine_select`       | qkv_cte, mlp, attention, moe                            |
 
 Any other kind fails at decode as unknown.
-Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode:
+Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
 
 | field                                      | decodes                                                                         |
 | ------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -379,6 +384,10 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `nc_matmul` `perf_mode`                    | none                                                                            |
 | `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                  |
 | `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16          |
+| `affine_select` `cmp_op`                   | equal, not_equal, greater, greater_equal, less, less_equal                      |
+| `affine_select` `channel_multiplier`       | any integer; the suite reaches 1, -1                                            |
+| `affine_select` `on_false_value`           | any number, as f32; the suite reaches -3.4028235e+38, 1.0                       |
+| `affine_select` `pred`                     | any pattern of `dst`'s elements per partition; another count fails at lowering  |
 
 ## Scope and limits
 

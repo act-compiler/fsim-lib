@@ -63,6 +63,8 @@ public:
   // Constants.
   int constant(const Type &type, const std::string &literal);
   int f32(double value, std::vector<int64_t> dims);
+  // An i32[n] constant of the values.
+  int i32(const std::vector<int64_t> &values);
   int fill(Dtype dtype, const Number &value, std::vector<int64_t> dims);
   int mask(const std::vector<bool> &bits, std::vector<int64_t> dims);
 

@@ -405,6 +405,13 @@ int Module::f32(double value, std::vector<int64_t> dims) {
                   hex(std::bit_cast<uint32_t>(static_cast<float>(value)), 8));
 }
 
+int Module::i32(const std::vector<int64_t> &values) {
+  std::string literal = "[";
+  for (size_t i = 0; i < values.size(); ++i)
+    literal += (i ? ", " : "") + std::to_string(values[i]);
+  return constant({"i32", {static_cast<int64_t>(values.size())}}, literal + "]");
+}
+
 int Module::fill(Dtype dtype, const Number &value, std::vector<int64_t> dims) {
   std::string literal;
   if (dtype == Dtype::f32)
