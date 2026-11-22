@@ -207,19 +207,34 @@ mlir::LogicalResult dotGeneral(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
-// The batch dimension slices whole into result dimension 0; batched indices are refused.
+// Unbatched indices slice the batch dimension whole; batched indices make it a batching dimension.
 mlir::LogicalResult gather(Batching &batching, mlir::Operation *op) {
   auto gather = mlir::cast<hlo::GatherOp>(op);
-  if (batching.isBatched(gather.getStartIndices()))
-    return mlir::emitError(op->getLoc()) << "no vmap rule for batched indices of " << op->getName();
+  bool batchedIndices = batching.isBatched(gather.getStartIndices());
   batching.batchOperand(op, 0);
   hlo::GatherDimensionNumbersAttr numbers = gather.getDimensionNumbers();
+  llvm::SmallVector<int64_t> offsets = shifted(numbers.getOffsetDims());
+  llvm::SmallVector<int64_t> operandBatching = shifted(numbers.getOperandBatchingDims());
+  auto indicesBatching = llvm::to_vector(numbers.getStartIndicesBatchingDims());
+  auto sizes = llvm::to_vector(gather.getSliceSizes());
+  if (batchedIndices) {
+    // The batch dimension batches the operand and the indices.
+    operandBatching = leading(0, operandBatching);
+    indicesBatching = leading(0, shifted(indicesBatching));
+    sizes = leading(1, sizes);
+  } else {
+    // The batch dimension slices whole into result dimension 0.
+    offsets = leading(0, offsets);
+    sizes = leading(batching.batch_size, sizes);
+  }
   gather.setDimensionNumbersAttr(hlo::GatherDimensionNumbersAttr::get(
-      op->getContext(), leading(0, shifted(numbers.getOffsetDims())),
-      shifted(numbers.getCollapsedSliceDims()), shifted(numbers.getOperandBatchingDims()),
-      numbers.getStartIndicesBatchingDims(), shifted(numbers.getStartIndexMap()),
-      numbers.getIndexVectorDim()));
-  gather.setSliceSizes(leading(batching.batch_size, gather.getSliceSizes()));
+      op->getContext(), offsets, shifted(numbers.getCollapsedSliceDims()), operandBatching,
+      indicesBatching, shifted(numbers.getStartIndexMap()),
+      numbers.getIndexVectorDim() + batchedIndices));
+  gather.setSliceSizes(sizes);
+  // Sorted indices need not sort along the batch dimension.
+  if (batchedIndices)
+    gather.setIndicesAreSorted(false);
   batching.addBatchDim(op);
   return mlir::success();
 }

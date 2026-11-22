@@ -170,6 +170,7 @@ It takes a module's text and returns a versioned StableHLO artifact, which PJRT 
 - `tf.aliasing_output` on every `@main` argument, so each state tensor updates in place
 - above a batch size of 1, `fsim-vmap` gives `@main`'s arguments and results a leading batch dimension of size `B`, keeping the aliasing.
   A constant, or an elementwise op over unbatched operands, stays unbatched; an op whose rule batches its operands takes a broadcast of it.
+  A gather at batched indices makes the batch dimension a batching dimension of its operand and its indices.
   An op fails the module's compile unless it has a `kRules` entry in `passes/vmap.cc` or is a StableHLO op with MLIR's `Elementwise` trait.
 - serialize at the StableHLO version jax 0.11.2's XLA accepts
 
