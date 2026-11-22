@@ -11,7 +11,7 @@ Paths here are relative to the repo root.
 ```bash
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
-./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
+./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T] [--num-samples N]
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
@@ -20,7 +20,7 @@ Paths here are relative to the repo root.
 - `bench.sh gen --isa nki` records each case once into `kernel.trace` in its folder under `benchmarks/nki/`.
 - `bench.sh run --isa nki` hands each case's `kernel.trace` to that build's `fsim-nki`, and checks each sample's output against its input set's golden.
   A sample is one simulation of the trace on one input set, one value of every input tensor with its golden.
-- A case's outputs go to `out/` in its folder under `benchmarks/nki/` until checked, leaving only `out/draws.bin`, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in the same folder.
+- A case's outputs go to `out/` in its folder under `benchmarks/nki/` until checked, leaving only `out/draws.bin`, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>].log` in the same folder.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace.
 - It simulates `--num-samples` samples, each one simulation of the trace that loads every `--inputs` file.
 - A `--num-samples` past one batch is refused, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.

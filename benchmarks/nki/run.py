@@ -3,7 +3,7 @@
 # and <case>/<log>, named by its build and knobs,
 # whose last line is its status: match, wrong, failing, N/A or not generated;
 # an xfail case is xfail or xpass.
-#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [bench...]
+#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [--num-samples N] [bench...]
 # FSIM_WALL_TIMEOUT caps each run's wall seconds, 60 by default.
 import argparse
 import ctypes
@@ -33,7 +33,7 @@ COMPILERS = [
 ]
 VARIANTS = ['eager', 'taidl', 'trigger', 'overlap']
 KNOBS = {'eager': [], 'taidl': [], 'trigger': ['trigger'], 'overlap': ['trigger', 'overlap']}
-DEFAULTS = {'trigger': 10000, 'overlap': 4}
+DEFAULTS = {'trigger': 10000, 'overlap': 4, 'num_samples': 1}
 # Wall seconds per run, the development cap.
 TIMEOUT = float(os.environ.get('FSIM_WALL_TIMEOUT', '60'))
 
@@ -81,8 +81,11 @@ def gpus():
 
 
 def log_name(compiler, variant, knobs):
-    # <compiler>-<variant>[-<trigger>[-<overlap>]].log, a knob per one it takes.
+    # <compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>].log: the variant's knobs,
+    # then a sample count not 1.
     names = [compiler, variant] + [str(knobs[k]) for k in KNOBS[variant]]
+    if knobs['num_samples'] != DEFAULTS['num_samples']:
+        names.append(f'n{knobs["num_samples"]}')
     return '-'.join(names) + '.log'
 
 
@@ -110,6 +113,8 @@ def simulate(folder, log, timeout, compiler, variant, knobs):
     cmd = [sim(compiler, variant), '--inputs', os.path.join(folder, 'inputs'), '--outputs', out]
     for k in KNOBS[variant]:
         cmd += [f'--{k}', str(knobs[k])]
+    if knobs['num_samples'] != DEFAULTS['num_samples']:
+        cmd += ['--num-samples', str(knobs['num_samples'])]
     cmd += [os.path.join(folder, 'kernel.trace')]
     limits = f'FSIM_WALL_TIMEOUT={timeout:g}'
     log.write(f'{limits} {" ".join(cmd)}\n')
@@ -269,6 +274,9 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--overlap', type=int, help=f'compile threads, {DEFAULTS["overlap"]} by default'
+    )
+    parser.add_argument(
+        '--num-samples', type=int, help=f'samples per run, {DEFAULTS["num_samples"]} by default'
     )
     args = parser.parse_args()
     todo = suite.resolve(suite.load(), args.benches)

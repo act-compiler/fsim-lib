@@ -14,7 +14,7 @@ Paths here are relative to the repo root.
 ```bash
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
-./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
+./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T] [--num-samples N]
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
@@ -43,7 +43,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
   | f16   | 1e-2               | 0.1            |
   | f32   | 1e-3               | 0.01           |
 
-- A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]].log`, with a knob per one the variant takes.
+- A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace; the runner always passes the file.
 - It loads `<inputs>/<name>.bin` for each input allocation and writes `<outputs>/<name>.bin` for each output.
 - Loading a sample zeroes its state, then reads each input's tensor.
@@ -165,7 +165,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - The operand's shape is the counts.
 - The recorder rewrites a view's element offset and pattern over its allocation's row into this form.
 - It refuses a view whose partition stride is not a whole number of partitions.
-- `+s(<view>)*<k>` adds the index the inner view reads, times `k` elements, at run time.
+- `+s(<view>)*<k>`, a run-time offset, adds the index the inner view reads, times `k` elements.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
 - An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.

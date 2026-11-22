@@ -24,6 +24,7 @@ Under review at a major systems conference.
   - the vmap pass over each module in `fsim/passes/test/` at `--batch-size 2`
   - the build of the NKI driver
   - the gen and the run of the nki cases the workflow lists
+  - the same run at `--num-samples 4`, except the case with a `+s()` run-time offset, which `drivers/nki/design.md` defines
 
 ## Running it
 
@@ -107,11 +108,12 @@ A sample is one simulation of the trace on one input set.
 - `--variant V`: the build's library variant, `overlap` by default.
 - `--trigger N`: the soft trigger op count, 10000 by default, for the `trigger` and `overlap` variants only.
 - `--overlap T`: the compile threads, 4 by default, for the `overlap` variant only.
+- `--num-samples N`: the samples per run, 1 by default.
 - `--bench PATH`: the cases, picked as gen picks them; it repeats, and without one, run takes every case.
 - `FSIM_WALL_TIMEOUT`: each case's wall seconds, 60 by default.
 - The build is `drivers/nki/build/<compiler>-<variant>/fsim-nki`, which `./scripts/build.sh nki` builds.
 - A case's outputs go to `out/<tensor>.bin` in the case's folder, and `out/draws.bin` holds each sample's input-set index; after the check, `out/` keeps only `draws.bin`.
-- A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in its folder, with a knob per one the variant takes.
+- A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>].log` in its folder, with a knob per one the variant takes and the sample count unless 1.
 - The log's last line, also printed per case, is its status: `match`, `wrong`, `failing`, `N/A` or `not generated`.
 - `N/A` marks a `taidl` build that stops at a second module.
 - An `xfail` case is `xfail` when `fsim-nki` rejects it with the case's expected message, `xpass` when it accepts it, and `failing` otherwise.
