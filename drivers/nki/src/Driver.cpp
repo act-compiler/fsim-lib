@@ -1,68 +1,88 @@
 #include "Driver.h"
 
 #include <algorithm>
-#include <chrono>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 
 #include "accelerator/Limits.h"
 #include "fsim/pipeline.h"
-#include "fsim/runtime.h"
 #include "isa/Instruction.h"
-#include "samples/Outputs.h"
 #include "trace/Parser.h"
 
 namespace nki {
 
 namespace {
 
-// The state tensors, in @main's order.
-std::vector<fsim::Tensor> state(Accelerator &a) {
-  using fsim::ElementType;
-  return {
-      {ElementType::ui8, {1, static_cast<int64_t>(a.hbm.size())}, a.hbm.data()},
-      {ElementType::ui8, {kPartitions, kSbufRow}, a.sbuf.data()},
-      {ElementType::ui8, {kPartitions, kPsumRow}, a.psum.data()},
-      {ElementType::f32, {kPartitions, 1}, a.reduceRegs.data()},
-  };
-}
-
 // Their types, as the module's parameters.
-std::vector<Type> types(const std::vector<fsim::Tensor> &tensors) {
+std::vector<Type> types(const std::vector<fsim::Tensor> &state) {
   std::vector<Type> out;
-  for (const fsim::Tensor &t : tensors)
+  for (const fsim::Tensor &t : state)
     out.push_back({t.type == fsim::ElementType::f32 ? "f32" : "ui8", t.dims});
   return out;
 }
 
 } // namespace
 
-Driver::Driver(std::string inputs, std::string outputs, bool validate)
-    : inputs_(std::move(inputs)), outputs_(std::move(outputs)), validate_(validate) {
+Driver::Driver(std::string trace) : path_(std::move(trace)) {
 }
 
 Driver::~Driver() = default;
 
-void Driver::run(std::istream &in) {
+void Driver::validate() {
+  read(&Driver::check);
+}
+
+void Driver::trace(std::function<void(const Alloc &)> add,
+                   std::function<fsim::Pipeline &()> upload) {
+  add_ = std::move(add);
+  upload_ = std::move(upload);
+  read(&Driver::record, &Driver::begin);
+}
+
+Accelerator &Driver::accelerator() {
+  return *accelerator_;
+}
+
+std::vector<fsim::Tensor> Driver::state() {
+  using fsim::ElementType;
+  Accelerator &a = *accelerator_;
+  return {
+      {ElementType::ui8, {1, a.rowBytes(Arena::hbm)}, a.hbm.data()},
+      {ElementType::ui8, {kPartitions, kSbufRow}, a.sbuf.data()},
+      {ElementType::ui8, {kPartitions, kPsumRow}, a.psum.data()},
+      {ElementType::f32, {kPartitions, 1}, a.reduceRegs.data()},
+  };
+}
+
+const std::vector<Output> &Driver::outputs() const {
+  return kernel_.outputs;
+}
+
+std::unique_ptr<std::istream> Driver::open() const {
+  if (path_ == "-")
+    return std::make_unique<std::istream>(std::cin.rdbuf());
+  auto in = std::make_unique<std::ifstream>(path_);
+  if (!*in)
+    throw std::runtime_error("cannot read " + path_);
+  return in;
+}
+
+void Driver::read(void (Driver::*each)(const std::string &), void (Driver::*start)()) {
+  std::unique_ptr<std::istream> in = open();
   std::string line;
   size_t number = 0;
   try {
-    while (std::getline(in, line)) {
+    while (std::getline(*in, line)) {
       ++number;
       if (ended_)
         throw std::runtime_error("a record after end");
       if (number == 1) {
         kernel_.header = parseHeader(line);
-        if (validate_)
-          continue;
-        accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
-        module_ = std::make_unique<Module>(types(state(*accelerator_)));
-      } else if (validate_) {
-        check(line);
+        if (start)
+          (this->*start)();
       } else {
-        record(line);
-        if (ended_)
-          finish();
+        (this->*each)(line);
       }
     }
     if (!ended_)
@@ -70,6 +90,11 @@ void Driver::run(std::istream &in) {
   } catch (const std::exception &e) {
     throw std::runtime_error("line " + std::to_string(number) + ": " + e.what());
   }
+}
+
+void Driver::begin() {
+  accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
+  module_ = std::make_unique<Module>(types(state()));
 }
 
 void Driver::record(const std::string &line) {
@@ -80,13 +105,14 @@ void Driver::record(const std::string &line) {
       throw std::runtime_error("input " + a->input + " after the first instruction");
     accelerator_->allocate(*a);
     if (!a->input.empty())
-      inputs_.add(*a);
+      add_(*a);
   } else if (auto *f = std::get_if<Fields>(&r)) {
     execute(*f);
   } else if (auto *o = std::get_if<Output>(&r)) {
     kernel_.outputs.push_back(std::move(*o));
   } else {
     ended_ = true;
+    finish();
   }
 }
 
@@ -142,11 +168,7 @@ void Driver::check(const std::string &line) {
 }
 
 void Driver::upload() {
-  inputs_.load(*accelerator_);
-  runtime_ = std::make_unique<fsim::Runtime>();
-  pipeline_ = std::make_unique<fsim::Pipeline>(*runtime_, state(*accelerator_));
-  // The run clock starts after the upload.
-  pipeline_->begin_run();
+  pipeline_ = &upload_();
 }
 
 void Driver::submit() {
@@ -166,13 +188,6 @@ void Driver::finish() {
   // A run killed in sync keeps this line.
   pipeline_->summary(std::cout);
   submit();
-  sync();
-  // The output stores stay out of the run's clock.
-  auto begin = std::chrono::steady_clock::now();
-  storeOutputs(*accelerator_, kernel_.outputs, outputs_);
-  pipeline_->exclude(
-      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count());
-  pipeline_->summary(std::cout);
 }
 
 } // namespace nki
