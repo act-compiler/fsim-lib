@@ -77,6 +77,9 @@ public:
   // Prints the run's summary line so far, '-' for a value not yet known.
   void summary(std::ostream &out) const;
 
+  // Leaves ms of a driver's loads and stores out of the run's clock.
+  void exclude(double ms);
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

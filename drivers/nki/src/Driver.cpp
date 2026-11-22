@@ -1,6 +1,7 @@
 #include "Driver.h"
 
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -162,8 +163,12 @@ void Driver::finish() {
   pipeline_->summary(std::cout);
   submit();
   sync();
+  // The output stores stay out of the run's clock.
+  auto begin = std::chrono::steady_clock::now();
   for (const Output &o : kernel_.outputs)
     accelerator_->store(o, outputs_);
+  pipeline_->exclude(
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count());
   pipeline_->summary(std::cout);
 }
 

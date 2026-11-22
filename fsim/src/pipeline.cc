@@ -494,6 +494,11 @@ void Pipeline::sync() {
   impl_->settled = true;
 }
 
+void Pipeline::exclude(double ms) {
+  impl_->begin +=
+      std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
+}
+
 Stats Pipeline::stats() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->stats;

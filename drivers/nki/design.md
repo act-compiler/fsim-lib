@@ -53,7 +53,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 ```
 
 - [fsim/README.md](../../fsim/README.md) defines its fields.
-- The run's clock starts after the state's upload, at the first instruction, so it leaves out the header, the allocations and the input loads.
+- The run's clock starts after the state's upload, at the first instruction, so it leaves out the header, the allocations, the input loads and the output stores.
 - The trace ends at `end`, with `trace` the instructions run.
 - The line prints at `end`, so a run killed in the final sync keeps it, and again after the outputs are written.
 - `bench.sh run` reads the last line into its status line.

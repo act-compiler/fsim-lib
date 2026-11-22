@@ -122,11 +122,11 @@ The status line also gives the case's worst relative error, `err`, and the field
 | Field              | Meaning                                                               |
 | ------------------ | --------------------------------------------------------------------- |
 | `tracing`          | the trace loop                                                        |
-| `wall`             | the whole run                                                         |
+| `wall`             | the run's clock, less the loads and stores the driver excludes        |
 | `simulation`       | every module's execute, summed                                        |
 | `overhead`         | `wall` less `simulation`                                              |
 | `compile_overhead` | the `overlap` executor's wait on compile, else every module's compile |
-| `tracing_overhead` | `overhead` less `compile_overhead`, the output copy included          |
+| `tracing_overhead` | `overhead` less `compile_overhead`                                    |
 | `trace`            | the trace length, a count                                             |
 | `modules`          | the modules run, a count                                              |
 

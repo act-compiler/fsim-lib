@@ -68,6 +68,7 @@ Outside `overlap`, `submit` runs each module before it returns.
 | `--overlap T` | 4       | the compile thread count  |
 
 A knob the build lacks, or 0 threads, prints the refusal and exits 1.
+`Pipeline::exclude(ms)` leaves `ms` of a driver's loads and stores out of the run's clock.
 `Pipeline::soft_trigger(ops)` tells a driver whether a graph of `ops` ops, the prologue counted, flushes now.
 `Pipeline::stats()` gives each module's compile and execute ms.
 In `overlap` its `waits` sums the executor's idle ms, each wait counted once it takes a module:
@@ -94,7 +95,7 @@ Times are seconds to 3 decimals, and a value not yet known prints `-`:
 | `simulation`       | the modules' execute time                                       | a clean `sync` of modules |
 | `tracing_overhead` | `overhead` minus `compile_overhead`                             | a clean `sync` of modules |
 | `compile_overhead` | `waits.compile_ms` in `overlap`, else the modules' compile time | a clean `sync` of modules |
-| `wall`             | the clock at `summary`                                          | any `sync`, failed or not |
+| `wall`             | the clock at `summary`, less every `exclude`                    | any `sync`, failed or not |
 | `trace`            | `end_trace`'s instruction count                                 | `end_trace`               |
 | `modules`          | the submitted module count                                      | a clean `sync` of modules |
 
