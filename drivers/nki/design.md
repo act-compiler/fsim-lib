@@ -241,42 +241,43 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 4. `src/Driver.{h,cpp}`
 5. `src/samples/` and `src/main.cpp`
 
-| path                                  | role                                                                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement       |
-| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                               |
-| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                  |
-| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                     |
-| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken         |
-| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                         |
-| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                        |
-| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`          |
-| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                   |
-| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                 |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                     |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask    |
-| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank         |
-| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text |
-| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                    |
-| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                |
-| `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                          |
-| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`                                                                  |
-| `src/main.cpp`                        | the `fsim-nki` command line                                                                                        |
-| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                       |
+| path                                  | role                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement              |
+| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                      |
+| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                         |
+| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                            |
+| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken                |
+| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                                |
+| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                               |
+| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`                 |
+| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                          |
+| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                        |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith` |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask           |
+| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                |
+| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text        |
+| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                           |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                       |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                                 |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`                                                                         |
+| `src/main.cpp`                        | the `fsim-nki` command line                                                                                               |
+| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                              |
 
 ## From a record to StableHLO
 
 The library runs a fixed set of state tensors through modules.
 They are the driver's data models, in TAIDL's sense of a declared buffer an instruction addresses ([declarations](https://github.com/act-compiler/taidl/blob/v2.14/docs/declarations.md)).
 `hbm` plays TAIDL's `d0`, the off-chip memory as a flat buffer of bytes.
-The driver's state is four:
+The driver's state is five:
 
-| state         | type               | what it is                                                                                                                                                          |
-| ------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hbm`         | `ui8[1, hbm]`      | the HBM arena at the header's capacity                                                                                                                              |
-| `sbuf`        | `ui8[128, 229376]` | SBUF, 224 KiB per partition                                                                                                                                         |
-| `psum`        | `ui8[128, 16384]`  | PSUM, 8 banks of 2 KiB per partition                                                                                                                                |
-| `reduce_regs` | `f32[128, 1]`      | the activation engine's reduce registers ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)) |
+| state              | type               | what it is                                                                                                                                                                               |
+| ------------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hbm`              | `ui8[1, hbm]`      | the HBM arena at the header's capacity                                                                                                                                                   |
+| `sbuf`             | `ui8[128, 229376]` | SBUF, 224 KiB per partition                                                                                                                                                              |
+| `psum`             | `ui8[128, 16384]`  | PSUM, 8 banks of 2 KiB per partition                                                                                                                                                     |
+| `reduce_regs`      | `f32[128, 1]`      | the activation engine's reduce registers ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html))                      |
+| `accumulator_regs` | `f32[128, 1]`      | the Vector Engine's accumulator registers ([nki.isa.tensor_scalar_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar_reduce.html)) |
 
 - SBUF is modelled at the documented 224 KiB per partition.
 - nki's `nl.tile_size.sbuf_fmax_bytes` gives 212984 usable bytes per partition on trn2, 16 KiB and 8 bytes below 224 KiB; the driver checks the documented bound.
@@ -324,6 +325,7 @@ Control and state:
 - `reduce_cmd=reset` zeroes them, `reset_reduce` stores the reduction, and `reduce` adds it on.
 - `activation` refuses a `reduce_op` other than `add` with `reduce` or `reset_reduce`, since the ISA reduces by add only ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)).
 - The suite reaches `reduce_cmd=reset_reduce` with a `reduce_res` in `activation` and `tensor_scalar_reduce`, through attention_cte and qkv_cte.
+- `tensor_scalar_reduce` reduces into `accumulator_regs` from `data`'s partition start, and its `reduce_res` reads them from its own, as nki.simulate does.
 - Each instruction runs as its record arrives, and `instructionCounter_` counts them for the summary's `trace`.
 - After `end`, the driver ends the trace, prints the summary and submits; its batch loop syncs and stores the outputs.
 
@@ -388,11 +390,14 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - It ignores `engine`, as nki.simulate does.
 - `dma_transpose` writes `src` permuted by `axes` to `dst` ([nki.isa.dma_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.dma_transpose.html)), in flat order as nki.simulate's `np.transpose` does.
 - It does not check the docs' limits on `src.shape[0]`, which the suite's tiles exceed; nki.simulate does not check them either.
+- `tensor_scalar_reduce` computes `data op0 operand0` as `tensor_scalar_arith` does, then reduces `dst` over its free dims by `reduce_op` ([nki.isa.tensor_scalar_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar_reduce.html)).
+- It reduces `dst` as written, in `dst`'s dtype then f32, as nki.simulate reads it back; `reset_reduce` stores that reduction, as a reset to the identity then a fold would.
 - `reciprocal` computes `1.0 / data` in f32 and casts to `dst`'s dtype ([nki.isa.reciprocal](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.reciprocal.html)), writing in flat order as nki.simulate does.
 - `tensor_tensor_scan` computes `r[i] = op1(op0(data0[i], r[i-1]), data1[i])` along the free dim per partition, from `initial`, in f32 ([nki.isa.tensor_tensor_scan](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_tensor_scan.html)).
 - For multiply then add, it composes the maps `r -> data0[i] * r + data1[i]` in a Hillis-Steele scan, so its sums run in a tree order, not nki.simulate's loop order.
 - The scan forms prefix products of `data0` before `initial` enters, so a product past f32's range gives a result the loop does not.
 - `select_reduce` takes `on_true` where `predicate` is nonzero and `on_false` elsewhere, in f32, and casts to `dst`'s dtype ([nki.isa.select_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.select_reduce.html)).
+- With `reduce_cmd=idle`, `select_reduce` leaves `accumulator_regs` unchanged, as nki.simulate does; the docs say idle may still modify the accumulator.
 - `nc_stream_shuffle` gives each `dst` partition `p` the `src` partition `32 * (p / 32) + shuffle_mask[p % 32]`, the quadrant rule of [nki.isa.nc_stream_shuffle](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_stream_shuffle.html).
 - It copies bits, as `tensor_copy` does, departing from nki.simulate's f32 convert, which would round a u32 above 2^24.
 - `stream_transpose` is the record kind of [nki.isa.nc_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_transpose.html) on the Vector Engine.
@@ -405,29 +410,29 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 ## Coverage
 
 The suite's thirteen kernels reach seventeen instruction kinds at trn2, each with one keyword set, no register load and no register loop.
-Of these, `fsim-nki` decodes the ones in the table.
 
-| kind                  | kernels                                                 |
-| --------------------- | ------------------------------------------------------- |
-| `dma_copy`            | all                                                     |
-| `memset`              | all but rope and output_proj                            |
-| `activation`          | norms, qkv, mlp, attention, moe                         |
-| `tensor_tensor_arith` | norms, rope, qkv_tkg, mlp, attention, moe               |
-| `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert               |
-| `nc_matmul`           | all but rope and cumsum                                 |
-| `tensor_copy`         | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
-| `tensor_tensor_scan`  | cumsum                                                  |
-| `tensor_scalar_arith` | qkv_cte, attention, moe                                 |
-| `affine_select`       | qkv_cte, mlp, attention, moe                            |
-| `dma_transpose`       | attention_cte                                           |
-| `reciprocal`          | attention                                               |
-| `select_reduce`       | attention_tkg                                           |
-| `nc_stream_shuffle`   | attention_tkg, moe                                      |
-| `stream_transpose`    | attention_tkg, moe selective                            |
-| `local_gather`        | moe selective                                           |
+| kind                   | kernels                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| `dma_copy`             | all                                                     |
+| `memset`               | all but rope and output_proj                            |
+| `activation`           | norms, qkv, mlp, attention, moe                         |
+| `tensor_tensor_arith`  | norms, rope, qkv_tkg, mlp, attention, moe               |
+| `tensor_reduce_arith`  | norms, qkv_tkg, attention, moe all_expert               |
+| `nc_matmul`            | all but rope and cumsum                                 |
+| `tensor_copy`          | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
+| `tensor_tensor_scan`   | cumsum                                                  |
+| `tensor_scalar_arith`  | qkv_cte, attention, moe                                 |
+| `affine_select`        | qkv_cte, mlp, attention, moe                            |
+| `dma_transpose`        | attention_cte                                           |
+| `reciprocal`           | attention                                               |
+| `tensor_scalar_reduce` | attention_cte                                           |
+| `select_reduce`        | attention_tkg                                           |
+| `nc_stream_shuffle`    | attention_tkg, moe                                      |
+| `stream_transpose`     | attention_tkg, moe selective                            |
+| `local_gather`         | moe selective                                           |
 
-Any other kind fails at decode as unknown.
-Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
+`fsim-nki` decodes these kinds; any other fails at decode as unknown.
+Within a decoded kind, it decodes these values, and any other fails at decode, or at lowering where a row says so:
 
 | field                                      | decodes                                                                              |
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -450,6 +455,10 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `affine_select` `pred`                     | any pattern of `dst`'s elements per partition; another count fails at lowering       |
 | `dma_transpose` `axes`                     | [1, 0], [2, 1, 0], [3, 1, 2, 0], as documented; the suite reaches the last           |
 | `dma_transpose` `src`, `dst`               | equal 2-byte dtypes, `src` in hbm or sbuf, `dst` in sbuf; the suite uses bf16        |
+| `tensor_scalar_reduce` `op0`, `operand0`   | add, multiply, maximum, by a view or any number, as f32, with `reverse0` false       |
+| `tensor_scalar_reduce` `reduce_op`         | add, multiply, maximum, minimum, as documented; the suite reaches maximum            |
+| `tensor_scalar_reduce` `reduce_cmd`        | reset_reduce, with `reduce_init` none                                                |
+| `tensor_scalar_reduce` `reduce_res`        | a view or none; the suite reaches an sbuf f32 view                                   |
 | `reciprocal` `data` to `dst` dtype         | any pair, through f32; the suite reaches f32 to f32                                  |
 | `tensor_tensor_scan` `op0`, `op1`          | multiply then add, with `reverse0` and `reverse1` false                              |
 | `tensor_tensor_scan` `initial`             | a view, a scalar refused; the suite reaches an sbuf f32 `[128, 1]`                   |
@@ -487,3 +496,4 @@ The driver's terms follow these, pinned to the versions it was written against:
 - [MLIR affine dialect](https://mlir.llvm.org/docs/Dialects/Affine/#affinedelinearize_index-affineaffinedelinearizeindexop): `affine.delinearize_index`, the split a nested view's reshape follows.
 - [NKI CPU Simulator guide, Neuron SDK 2.32](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision): nki.simulate's numerical precision.
 - [nki.isa.activation, Neuron SDK 2.32](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html): `reduce_regs`, `reduce_cmd` and `reduce_op`.
+- [nki.isa.tensor_scalar_reduce, Neuron SDK 2.32](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar_reduce.html): accumulator registers, `reduce_cmd` and `reduce_res`.

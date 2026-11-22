@@ -374,7 +374,7 @@ void Module::write(const View &v, int value) {
 void Module::lanes(Slot slot, int64_t first, int64_t count) const {
   int64_t partitions = state_[static_cast<int>(slot)].dims[0];
   if (first < 0 || first + count > partitions)
-    fail("reduce register lanes " + std::to_string(first) + "+" + std::to_string(count) + " past " +
+    fail("register lanes " + std::to_string(first) + "+" + std::to_string(count) + " past " +
          std::to_string(partitions));
 }
 

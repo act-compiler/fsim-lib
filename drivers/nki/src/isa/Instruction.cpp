@@ -23,6 +23,7 @@ Decode decoder(const std::string &kind) {
       {"stream_transpose", decodeStreamTranspose},
       {"tensor_copy", decodeTensorCopy},
       {"tensor_scalar_arith", decodeTensorScalarArith},
+      {"tensor_scalar_reduce", decodeTensorScalarReduce},
       {"tensor_tensor_scan", decodeTensorTensorScan},
   };
   auto it = kinds.find(kind);
