@@ -46,6 +46,8 @@ public:
   std::optional<bool> optFlag(const std::string &name);
   std::string word(const std::string &name);
   std::optional<std::string> optWord(const std::string &name);
+  // Takes a word field, refusing any word but value.
+  void expect(const std::string &name, const std::string &value);
   // Takes a flag, refusing true.
   void refuse(const std::string &name);
   // Takes a field, refusing any value but none.

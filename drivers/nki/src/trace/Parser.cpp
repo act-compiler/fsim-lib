@@ -426,6 +426,12 @@ std::optional<std::string> Fields::optWord(const std::string &name) {
   return std::get<Word>(v).text;
 }
 
+void Fields::expect(const std::string &name, const std::string &value) {
+  std::string got = word(name);
+  if (got != value)
+    fail(name, "'" + got + "' is not decoded");
+}
+
 void Fields::refuse(const std::string &name) {
   if (flag(name))
     fail(name, "true is not decoded");
