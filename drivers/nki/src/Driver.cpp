@@ -53,6 +53,11 @@ void Driver::trace(std::function<void(const Alloc &)> add,
   add_ = std::move(add);
   upload_ = std::move(upload);
   pipeline_ = nullptr;
+  // A +s() offset anywhere keeps the oob flag in the state.
+  std::unique_ptr<std::istream> in = open();
+  std::string line;
+  while (!oob_ && std::getline(*in, line))
+    oob_ = line.find("+s(") != std::string::npos;
   read(&Driver::record, &Driver::begin);
 }
 
@@ -63,13 +68,16 @@ Accelerator &Driver::accelerator() {
 std::vector<fsim::Tensor> Driver::state() {
   using fsim::ElementType;
   Accelerator &a = *accelerator_;
-  return {
+  std::vector<fsim::Tensor> state = {
       {ElementType::ui8, {1, a.rowBytes(Arena::hbm)}, a.hbm.data()},
       {ElementType::ui8, {kPartitions, kSbufRow}, a.sbuf.data()},
       {ElementType::ui8, {kPartitions, kPsumRow}, a.psum.data()},
       {ElementType::f32, {kPartitions, 1}, a.reduceRegs.data()},
       {ElementType::f32, {kPartitions, 1}, a.accumulatorRegs.data()},
   };
+  if (oob_)
+    state.push_back({ElementType::ui8, {1}, a.oob.data()});
+  return state;
 }
 
 const std::vector<Output> &Driver::outputs() const {

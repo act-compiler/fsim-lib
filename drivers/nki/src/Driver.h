@@ -41,7 +41,8 @@ public:
 
   // The host copies, after a trace's header.
   Accelerator &accelerator();
-  // The state tensors over them, in @main's order, one sample's dims each.
+  // The state tensors over them, in @main's order, one sample's dims each;
+  // the oob flag last when the trace holds a +s() offset.
   std::vector<fsim::Tensor> state();
   // The last reading's outputs.
   const std::vector<Output> &outputs() const;
@@ -81,6 +82,8 @@ private:
   size_t bankUnchecked_ = 0;
   // An instruction takes a +s() offset, scanning.
   bool runtimeOffset_ = false;
+  // A +s() offset in the trace: the state holds the oob flag.
+  bool oob_ = false;
   // Its host copies are the pipeline's state.
   std::unique_ptr<Accelerator> accelerator_;
   // The trace's callbacks, and its pipeline once built.

@@ -267,7 +267,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                            |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                          |
 | `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith`   |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask             |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas, registers and `oob`, the allocation table, the PSUM written mask      |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                  |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text          |
 | `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, a parse-only reading for `+s(...)` offsets, `resolve`, soft trigger |
@@ -282,7 +282,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 The library runs a fixed set of state tensors through modules.
 They are the driver's data models, in TAIDL's sense of a declared buffer an instruction addresses ([declarations](https://github.com/act-compiler/taidl/blob/v2.14/docs/declarations.md)).
 `hbm` plays TAIDL's `d0`, the off-chip memory as a flat buffer of bytes.
-The driver's state is five:
+The driver's state is five tensors, with a sixth, `oob`, when the trace's text holds a `+s(...)` offset:
 
 | state              | type               | what it is                                                                                                                                                                               |
 | ------------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -291,6 +291,7 @@ The driver's state is five:
 | `psum`             | `ui8[128, 16384]`  | PSUM, 8 banks of 2 KiB per partition                                                                                                                                                     |
 | `reduce_regs`      | `f32[128, 1]`      | the activation engine's reduce registers ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html))                      |
 | `accumulator_regs` | `f32[128, 1]`      | the Vector Engine's accumulator registers ([nki.isa.tensor_scalar_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar_reduce.html)) |
+| `oob`              | `ui8[1]`           | set when a `+s(...)` index clamps to keep its view in its allocation                                                                                                                     |
 
 - SBUF is modelled at the documented 224 KiB per partition.
 - nki's `nl.tile_size.sbuf_fmax_bytes` gives 212984 usable bytes per partition on trn2, 16 KiB and 8 bytes below 224 KiB; the driver checks the documented bound.
@@ -313,7 +314,7 @@ It lowers to the ops the [StableHLO spec](https://openxla.org/stablehlo/spec) de
 - The paths above then read the view from the window as from the arena.
 - The window spans what the path slices: the one-level slice, the nested window, or the gathered elements.
 - A nested view's window stays in the arena row at every index of the range, or the view takes the gather path.
-- An index in its range reads the bytes a constant address would; one outside it clamps, where a constant address past the allocation is refused.
+- An index in its range reads the bytes a constant address would; one outside it clamps and sets `oob`, where a constant address past the allocation is refused.
 - The result is `[count_0, ..., count_n]` in the view's dtype.
 - compute: the ops the numpy simulator spells, over f32 converts of the operands.
 - `write`: a nested pattern at partition stride 1 is a dynamic_update_slice of the arena's window, after an update of the delinearized window when the pattern leaves gaps.
@@ -335,6 +336,8 @@ Control and state:
   - its dtype's alignment
 - For a `+s(...)` offset, it finds the range of index values that keeps the view in its allocation, and checks the view at the first.
 - The index stays on the device, so no trace needs a mid-trace `sync`, one before its `end`.
+- A sample's load clears its `oob`, and the sync hands it back with the rest of the state.
+- A set `oob` fails the run when the store of that sample's outputs reads it, naming the sample and its input set.
 - `nc_matmul` resolves `accumulate` at trace time from a PSUM written mask in `Accelerator`, per allocation:
   - Each PSUM byte holds the allocation that last wrote it, so a new allocation starts unwritten.
   - Any write to PSUM, by a matmul or not, sets its bytes to the view's allocation.

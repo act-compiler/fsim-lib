@@ -1,5 +1,5 @@
 // The Accelerator: the arenas' host copies, the reduce and accumulator registers,
-// the allocation table and the PSUM written mask.
+// the oob flag, the allocation table and the PSUM written mask.
 // Host copies are the pipeline's state after a sync, each holding the batch's samples back to back.
 #pragma once
 
@@ -50,6 +50,7 @@ public:
   std::vector<uint8_t> hbm, sbuf, psum;
   std::vector<float> reduceRegs;      // f32[128, 1] per sample
   std::vector<float> accumulatorRegs; // f32[128, 1] per sample, the Vector Engine's
+  std::vector<uint8_t> oob;           // ui8[1] per sample, set by a clamped +s() index
   std::map<int64_t, Alloc> allocs;
   // A span of PSUM bytes to end, last written by alloc.
   struct Owner {

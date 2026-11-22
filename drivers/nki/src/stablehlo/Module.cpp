@@ -402,7 +402,13 @@ int Module::window(const View &v, int64_t low, int64_t first, int64_t extent) {
   if (types_[index].elem != "i32")
     index = bitcast(index, {"i32", types_[index].dims});
   index = convert(reshape(index, {1}), "i64");
-  index = binary("minimum", binary("maximum", index, i64(v.dyn->first)), i64(v.dyn->last));
+  int clamped = binary("minimum", binary("maximum", index, i64(v.dyn->first)), i64(v.dyn->last));
+  // A clamped index ORs into the oob flag.
+  int oob = static_cast<int>(Slot::oob);
+  if (oob >= static_cast<int>(slots_.size()))
+    fail("a +s() offset in a module without the oob flag");
+  slots_[oob] = binary("or", slots_[oob], convert(compare("NE", index, clamped), "ui8"));
+  index = clamped;
   // The window's first byte: element first at low, then step bytes per unit of the index.
   int64_t k = width(v.dtype), step = v.dyn->scale * k;
   int start = binary("add", binary("multiply", index, i64(step)), i64(first * k - low * step));

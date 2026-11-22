@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 
 #include "Driver.h"
@@ -88,8 +89,14 @@ void BatchLoop::store() {
     // Before the first byte, every sample's outputs must fit.
     if (first_ == 0)
       checkOutputs(accelerator, driver_.outputs(), inputs_.size(), outputs_);
-    for (uint32_t m = 0; m < batchSize_; ++m)
+    for (uint32_t m = 0; m < batchSize_; ++m) {
+      // The sync handed back the sample's oob flag with its outputs.
+      if (accelerator.oob[m])
+        throw std::runtime_error("a run-time offset left its allocation in sample " +
+                                 std::to_string(first_ + m) + " (input set " +
+                                 std::to_string(inputs_.draws()[first_ + m]) + ")");
       storeOutputs(accelerator, driver_.outputs(), m, first_ + m, outputs_);
+    }
   }));
 }
 
