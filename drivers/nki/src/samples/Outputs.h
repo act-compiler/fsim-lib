@@ -1,6 +1,8 @@
-// The outputs' files: <dir>/<name>.bin holds the output of that name.
+// The outputs' files: <dir>/<name>.bin holds every simulated sample's output, in sample order.
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -9,8 +11,8 @@
 
 namespace nki {
 
-// Writes the outputs, each to <dir>/<name>.bin.
+// Writes batchIndex's outputs as sample number sample of each <dir>/<name>.bin, in order from 0.
 void storeOutputs(const Accelerator &accelerator, const std::vector<Output> &outputs,
-                  const std::string &dir);
+                  uint32_t batchIndex, size_t sample, const std::string &dir);
 
 } // namespace nki

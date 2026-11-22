@@ -12,7 +12,7 @@ Paths here are relative to the repo root.
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
 ./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
-./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [<trace>|-]"
+./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
 
@@ -20,14 +20,17 @@ Paths here are relative to the repo root.
 - `bench.sh gen --isa nki` records each case once into `kernel.trace` in its folder under `benchmarks/nki/`.
 - `bench.sh run --isa nki` hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the outputs against the case's golden.
 - A case's outputs go to `out/` in its folder under `benchmarks/nki/` until checked, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in the same folder.
-- `fsim-nki` reads a trace file, or stdin for `-` or no trace, loads each input from `--inputs` and writes each output to `--outputs`.
-- It ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
+- `fsim-nki` reads a trace file, or stdin for `-` or no trace.
+- It simulates `--num-samples` samples, each one simulation of the trace that loads every `--inputs` file.
+- A `--num-samples` past one batch is refused, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
+- Each `--outputs` file `<name>.bin` holds every sample's output back to back.
+- `fsim-nki` ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
 
   ```
   fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003 compile_overhead=0.063 wall=0.073 trace=11 modules=1
   ```
 
-- `--trigger` and `--overlap` are the library's knobs.
+- `--trigger`, `--overlap` and `--num-samples` are the library's knobs.
 - `--validate` parses the trace and runs its memory-model checks, which [design.md](design.md) lists, without simulating it.
 - It takes no `--inputs` or `--outputs`, and ends with `checked records=N allocs=M bank_unchecked=K`.
 

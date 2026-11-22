@@ -15,7 +15,7 @@ Paths here are relative to the repo root.
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
 ./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
-./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [<trace>|-]"
+./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
 
@@ -43,7 +43,12 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace; the runner always passes the file.
 - It loads `<inputs>/<name>.bin` for each input allocation and writes `<outputs>/<name>.bin` for each output.
-- `--trigger` and `--overlap` are the library's knobs.
+- Loading a sample zeroes its state, then reads each input's tensor.
+- Samples run together in batches of the library's batch size `B`, which `fsim/README.md` defines.
+- The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
+- A `--num-samples` past one batch of `B` samples is refused.
+- `<outputs>/<name>.bin` holds the output of every simulated sample in order.
+- `--trigger`, `--overlap` and `--num-samples` are the library's knobs.
 - An undecoded instruction kind, a bad record or a refused view fails the run loudly.
 
 A run's evaluation log is fsim's summary line, here an `rmsnorm_tkg` case's under `overlap`:
@@ -193,7 +198,7 @@ Four records are reserved in the format, so a rolled loop or a register loop is 
 
 ### End of kernel
 
-`output out %2` names a returned tensor; `fsim-nki` writes its bytes to `<outputs>/out.bin` after the final sync.
+`output out %2` names a returned tensor; `fsim-nki` writes each sample's bytes to `<outputs>/out.bin` after its batch's sync.
 `end` is the last line; a stream without it is an error.
 
 ### Example
@@ -249,13 +254,13 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                   |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                 |
 | `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                     |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask          |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask    |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank         |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text |
 | `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                    |
-| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one sample: its load, trace and store                                                   |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                |
 | `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                          |
-| `src/samples/Outputs.{h,cpp}`         | the outputs into `<outputs>/<name>.bin`                                                                            |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`                                                                  |
 | `src/main.cpp`                        | the `fsim-nki` command line                                                                                        |
 | `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                       |
 
@@ -468,7 +473,6 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 - Execution is one program order, as in nki's simulator: no engines, semaphores or scheduling, so no race is modelled.
 - Inputs are `shared_hbm`, as a compiled kernel sees them; this is what lets all_expert record.
 - A kernel that converts a register to a Python value cannot be recorded; the backend raises, as nki's compiler frontend does.
-- Batching over input sets is a later `fsim-nki` flag.
 
 ## References
 

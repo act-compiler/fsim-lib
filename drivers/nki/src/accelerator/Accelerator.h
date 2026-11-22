@@ -1,6 +1,7 @@
 // The Accelerator: the arenas' host copies, the reduce registers,
 // the allocation table and the PSUM written mask.
-// Host copies are the pipeline's state after a sync.
+// Host copies are the pipeline's state after a sync, each holding the batch's samples back to back.
+// Host reads during a trace address batch index 0, the first.
 #pragma once
 
 #include <cstdint>
@@ -20,15 +21,22 @@ class Accelerator {
 public:
   explicit Accelerator(int64_t hbm);
 
+  // Sizes each host copy to batchSize samples back to back, zeroed.
+  void hold(uint32_t batchSize);
   // Bytes per partition row; hbm is one row.
   int64_t rowBytes(Arena arena) const;
   // Partitions of the arena.
   int64_t partitions(Arena arena) const;
-  // The host byte at a partition and byte.
+  // The host byte at a partition and byte, at batch index 0.
   uint8_t *at(Arena arena, int64_t partition, int64_t byte);
+  // The host byte at a partition and byte, in batchIndex's part of the host copy.
+  uint8_t *at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex);
+  const uint8_t *at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex) const;
 
   // Records an allocation.
   void allocate(const Alloc &alloc);
+  // Zeroes batchIndex's part of each host copy.
+  void zero(uint32_t batchIndex);
   // The view, its offset read from the host copies, checked.
   View resolve(const View &view);
   // Marks PSUM bytes written by the view's allocation.
@@ -41,7 +49,7 @@ public:
   void unclobbered(const View &view) const;
 
   std::vector<uint8_t> hbm, sbuf, psum;
-  std::vector<float> reduceRegs; // f32[128, 1]
+  std::vector<float> reduceRegs; // f32[128, 1] per sample
   std::map<int64_t, Alloc> allocs;
   // A span of PSUM bytes to end, last written by alloc.
   struct Owner {
@@ -56,6 +64,8 @@ private:
   // Per PSUM partition: the written spans by first byte; unwritten bytes have none.
   std::vector<std::map<int64_t, Owner>> written;
   std::map<int64_t, int64_t> clobbered; // allocation -> the last that overwrote its bytes
+
+  int64_t hbmRow_; // one sample's hbm bytes
 };
 
 } // namespace nki

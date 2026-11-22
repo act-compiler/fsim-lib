@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -119,6 +120,30 @@ void Runtime::Impl::await(PJRT_Event *event) const {
   }
   check(error, "PJRT_Event_Await");
   check(destroy_error, "PJRT_Event_Destroy");
+}
+
+int64_t Runtime::Impl::host_limit() {
+  // MemAvailable is in kB.
+  std::ifstream meminfo("/proc/meminfo");
+  for (std::string line; std::getline(meminfo, line);)
+    if (line.rfind("MemAvailable:", 0) == 0)
+      return std::stoll(line.substr(13)) * 1024;
+  throw std::runtime_error("fsim: no MemAvailable in /proc/meminfo");
+}
+
+int64_t Runtime::Impl::bytes_limit() const {
+#ifdef FSIM_DEVICE_CPU
+  // The CPU device's memory: available host memory.
+  return host_limit();
+#else
+  PJRT_Device_MemoryStats_Args args{};
+  args.struct_size = PJRT_Device_MemoryStats_Args_STRUCT_SIZE;
+  args.device = device;
+  check(api->PJRT_Device_MemoryStats(&args), "PJRT_Device_MemoryStats");
+  if (!args.bytes_limit_is_set)
+    throw std::runtime_error("fsim: the device reports no byte limit");
+  return args.bytes_limit;
+#endif
 }
 
 void Runtime::Impl::destroy(PJRT_Buffer *buffer) const {

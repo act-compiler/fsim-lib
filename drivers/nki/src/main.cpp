@@ -1,5 +1,5 @@
-// fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T]
-// [--validate] [<trace>|-]: simulates one trace, a file or stdin.
+// fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T] [--num-samples N]
+// [--validate] [<trace>|-]: simulates one trace, a file or stdin, over N samples.
 // --validate parses and checks it only, and takes no directories.
 #include <filesystem>
 #include <iostream>
@@ -13,7 +13,7 @@ namespace {
 
 int usage() {
   std::cerr << "usage: fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T] "
-               "[--validate] [<trace>|-]\n";
+               "[--num-samples N] [--validate] [<trace>|-]\n";
   return 1;
 }
 

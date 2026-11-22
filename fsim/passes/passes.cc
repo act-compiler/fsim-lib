@@ -173,11 +173,12 @@ int give(int status, const std::string &bytes, char **out, size_t *out_size) {
 
 } // namespace
 
-int fsim_passes_run(const char *text, size_t size, char **out, size_t *out_size) {
+int fsim_passes_run(const char *text, size_t size, size_t batch_size, char **out,
+                    size_t *out_size) {
   fsim::Stage stage;
   std::string artifact;
-  bool ok =
-      stage.parse({text, size}) && stage.stock() && stage.library() && stage.serialize(artifact);
+  bool ok = stage.parse({text, size}) && stage.stock() && stage.library() &&
+            stage.vmap(batch_size) && stage.serialize(artifact);
   return ok ? give(0, artifact, out, out_size) : give(1, stage.error(), out, out_size);
 }
 

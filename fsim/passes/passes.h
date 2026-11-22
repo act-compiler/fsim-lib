@@ -9,11 +9,11 @@
 extern "C" {
 #endif
 
-// Runs the stage over text; 0 on success, nonzero on failure.
+// Runs the stage over text, vmapped at batch_size; 0 on success.
 // *out gets a malloc'd buffer of *out_size bytes: the artifact, or the
 // failure's diagnostics. Free it with fsim_passes_free.
-__attribute__((visibility("default"))) int fsim_passes_run(const char *text, size_t size,
-                                                           char **out, size_t *out_size);
+__attribute__((visibility("default"))) int
+fsim_passes_run(const char *text, size_t size, size_t batch_size, char **out, size_t *out_size);
 // Frees a buffer fsim_passes_run returned.
 __attribute__((visibility("default"))) void fsim_passes_free(char *buffer);
 

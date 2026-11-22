@@ -1,6 +1,8 @@
 // The inputs: each input allocation's file holds its bytes.
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -16,12 +18,15 @@ public:
 
   // Adds an input allocation; refuses one off hbm, or a file of other than its bytes.
   void add(const Alloc &alloc);
-  // Loads each input allocation's file into the host copies.
-  void load(Accelerator &accelerator) const;
+  // Draws count samples' input sets.
+  void draw(size_t count);
+  // Zeroes batchIndex's part of each host copy, then reads each input's tensor.
+  void load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) const;
 
 private:
   std::string dir_;
   std::vector<Alloc> allocs_;
+  std::vector<uint32_t> draws_;
 };
 
 } // namespace nki

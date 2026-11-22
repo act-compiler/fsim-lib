@@ -26,13 +26,23 @@ void Inputs::add(const Alloc &a) {
   allocs_.push_back(a);
 }
 
-void Inputs::load(Accelerator &accelerator) const {
+void Inputs::draw(size_t count) {
+  draws_.resize(count);
+}
+
+void Inputs::load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) const {
+  accelerator.zero(batchIndex);
+  // Each input's tensor of input set s sits at s times its bytes.
+  uint32_t s = draws_[sample];
   for (const Alloc &a : allocs_) {
     std::string path = dir_ + "/" + a.input + ".bin";
     std::ifstream in(path, std::ios::binary);
-    in.read(reinterpret_cast<char *>(accelerator.at(Arena::hbm, 0, a.byte)), a.rowBytes());
+    in.seekg(static_cast<std::streamoff>(s) * a.rowBytes());
+    in.read(reinterpret_cast<char *>(accelerator.at(Arena::hbm, 0, a.byte, batchIndex)),
+            a.rowBytes());
     if (!in)
-      throw std::runtime_error("cannot read " + path);
+      throw std::runtime_error("cannot read input set " + std::to_string(s) + "'s tensor from " +
+                               path);
   }
 }
 

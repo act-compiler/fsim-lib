@@ -18,18 +18,15 @@ const Alloc &allocation(const Accelerator &accelerator, const Output &o) {
 } // namespace
 
 void storeOutputs(const Accelerator &accelerator, const std::vector<Output> &outputs,
-                  const std::string &dir) {
+                  uint32_t batchIndex, size_t sample, const std::string &dir) {
   for (const Output &o : outputs) {
     const Alloc &a = allocation(accelerator, o);
     std::string path = dir + "/" + o.name + ".bin";
-    std::ofstream out(path, std::ios::binary);
-    const std::vector<uint8_t> &bytes = a.arena == Arena::hbm    ? accelerator.hbm
-                                        : a.arena == Arena::sbuf ? accelerator.sbuf
-                                                                 : accelerator.psum;
+    // Sample 0 starts the file; each later sample appends.
+    std::ofstream out(path, std::ios::binary | (sample ? std::ios::app : std::ios::trunc));
     for (int64_t p = a.partition; p < a.partition + a.partitions(); ++p)
-      out.write(
-          reinterpret_cast<const char *>(bytes.data() + p * accelerator.rowBytes(a.arena) + a.byte),
-          a.rowBytes());
+      out.write(reinterpret_cast<const char *>(accelerator.at(a.arena, p, a.byte, batchIndex)),
+                a.rowBytes());
     if (!out)
       throw std::runtime_error("cannot write " + path);
   }

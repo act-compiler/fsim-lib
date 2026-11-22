@@ -1,6 +1,9 @@
-// The batch loop: the trace's one sample, loaded, traced and stored.
+// The batch loop: --num-samples N samples over the case's input sets, in batches of B.
+// The first batch traces into a pipeline at batch size B; an N past it is refused.
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -28,16 +31,18 @@ private:
   void add(const Alloc &alloc);
   // The trace's pipeline, built at the first instruction.
   fsim::Pipeline &upload();
-  // Runs the driver's trace, then syncs.
+  // Runs the driver's trace over the batch, then syncs.
   void trace();
-  // Loads the input allocations from their files.
+  // Loads every sample of the batch from its input set.
   void load();
-  // Stores the sample's outputs, out of the run's clock.
+  // Stores every sample of the batch, out of the run's clock.
   void store();
 
   Driver &driver_;
   std::string outputs_;
   Inputs inputs_;
+  uint32_t batchSize_ = 1; // B
+  size_t first_ = 0;       // the batch's first sample
   // The pipeline is destroyed before the runtime.
   fsim::Runtime runtime_;
   std::unique_ptr<fsim::Pipeline> pipeline_;

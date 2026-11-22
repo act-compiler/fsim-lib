@@ -62,13 +62,40 @@ The variants flush and run as follows:
 Outside `overlap`, `submit` runs each module before it returns.
 `Knobs::parse` consumes the run-time knobs from a command line:
 
-| knob          | default | what it sets              |
-| ------------- | ------- | ------------------------- |
-| `--trigger N` | 10000   | the soft trigger op count |
-| `--overlap T` | 4       | the compile thread count  |
+| knob              | default | what it sets                                                                      |
+| ----------------- | ------- | --------------------------------------------------------------------------------- |
+| `--trigger N`     | 10000   | the soft trigger op count                                                         |
+| `--overlap T`     | 4       | the compile thread count                                                          |
+| `--num-samples N` | 1       | the samples per run, each one simulation of the driver's trace over its own state |
 
-A knob the build lacks, or 0 threads, prints the refusal and exits 1.
+Each of these prints the refusal and exits 1:
+
+- a knob the build lacks
+- 0 threads
+- 0 samples
+- a `--num-samples` above 1 outside the `custom-` compilers, whose pass stage runs the vmap pass
+
+A run of `N` samples runs in batches, each `B` samples simulated together, where `B` is the batch size `Pipeline::batch_size(runtime, state)` gives for one sample's state tensors:
+
+- On the CPU, `B` is the smaller of `N` and 16; on the GPU, `B` is `N`.
+- A batch of `B` fits when `3 x B x` the state's bytes are within the available host memory and `2 x B x` them within the device's `bytes_limit`.
+- On the CPU the host holds the batch's state three times: in the driver's host memory, the state buffers and an execute's results.
+- The device holds the last two; the host's three are checked on the CPU and the GPU alike.
+- On the CPU the device's limit is the available host memory; on the GPU it is the device's reported limit, and a device that reports none throws.
+- Past either limit, `B` falls to the largest power of two that fits.
+- `Pipeline::batch_size` throws when one sample does not fit.
+- At `N` = 1, `B` is 1 and neither limit is checked.
+- `Pipeline::num_samples()` gives `N`.
+
+Each state tensor's host memory holds the batch's samples back to back, and above a batch size of 1 the device holds it as `[B, dims]`:
+
+- `Pipeline(runtime, state, batch_size)` takes the batch size.
+- The sample at batch index `m` starts from its part at byte `m x byte_size(tensor)`.
+- `sync` hands each of the batch's samples back to its own part.
+- Above a batch size of 1, a mid-trace `sync`, one before `end_trace`, throws.
+
 `Pipeline::exclude(ms)` leaves `ms` of a driver's loads and stores out of the run's clock.
+
 `Pipeline::soft_trigger(ops)` tells a driver whether a graph of `ops` ops, the prologue counted, flushes now.
 `Pipeline::stats()` gives each module's compile and execute ms.
 In `overlap` its `waits` sums the executor's idle ms, each wait counted once it takes a module:
@@ -123,6 +150,9 @@ It takes a module's text and returns a versioned StableHLO artifact, which PJRT 
     A read after its update moves before it, with the ops it needs.
     A buffer is left as is on a second update, a return, a read in another block, or a read whose move needs its update, a region or a side effect.
 - `tf.aliasing_output` on every `@main` argument, so each state tensor updates in place
+- above a batch size of 1, `fsim-vmap` gives `@main`'s arguments and results a leading batch dimension of size `B`, keeping the aliasing.
+  A constant, or an elementwise op over unbatched operands, stays unbatched; an op whose rule batches its operands takes a broadcast of it.
+  An op fails the module's compile unless it has a `kRules` entry in `passes/vmap.cc` or is a StableHLO op with MLIR's `Elementwise` trait.
 - serialize at the StableHLO version jax 0.11.2's XLA accepts
 
 A failed phase fails the module's compile with the phase's diagnostics.
