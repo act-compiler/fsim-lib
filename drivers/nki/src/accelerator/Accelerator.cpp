@@ -1,7 +1,8 @@
 #include "accelerator/Accelerator.h"
 
 #include <algorithm>
-#include <cstring>
+#include <limits>
+#include <memory>
 #include <stdexcept>
 
 #include "accelerator/Limits.h"
@@ -19,6 +20,11 @@ int64_t capacity(int64_t hbm) {
   if (hbm <= 0 || hbm % 4 != 0)
     fail("hbm=" + std::to_string(hbm) + " is not a positive multiple of 4 bytes");
   return hbm;
+}
+
+// a / b rounded down, b positive.
+int64_t floorDiv(int64_t a, int64_t b) {
+  return a / b - (a % b < 0);
 }
 
 // Calls f(partition, element, n) per span of n adjacent elements.
@@ -74,14 +80,10 @@ int64_t Accelerator::partitions(Arena arena) const {
   return arena == Arena::hbm ? 1 : kPartitions;
 }
 
-uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte) {
-  std::vector<uint8_t> &bytes = arena == Arena::hbm ? hbm : arena == Arena::sbuf ? sbuf : psum;
-  return bytes.data() + partition * rowBytes(arena) + byte;
-}
-
 uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex) {
+  std::vector<uint8_t> &bytes = arena == Arena::hbm ? hbm : arena == Arena::sbuf ? sbuf : psum;
   // Batch index m's partition p is the host row m * partitions + p.
-  return at(arena, batchIndex * partitions(arena) + partition, byte);
+  return bytes.data() + (batchIndex * partitions(arena) + partition) * rowBytes(arena) + byte;
 }
 
 const uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte,
@@ -142,16 +144,43 @@ void Accelerator::check(const View &v) const {
 
 View Accelerator::resolve(const View &view) {
   View v = view;
-  if (v.dyn) {
-    View inner = resolve(*v.dyn->view);
-    if ((inner.dtype != Dtype::i32 && inner.dtype != Dtype::u32) || inner.count() != 1)
-      fail("a +s() offset reads one i32 or u32; a vector offset is not decoded");
-    int32_t offset;
-    std::memcpy(&offset, at(inner.arena, inner.partition, inner.byte), sizeof offset);
-    v.byte += offset * v.dyn->scale * width(v.dtype);
-    v.dyn.reset();
+  if (!v.dyn) {
+    check(v);
+    return v;
   }
-  check(v);
+  View inner = resolve(*v.dyn->view);
+  if (inner.dyn || (inner.dtype != Dtype::i32 && inner.dtype != Dtype::u32) || inner.count() != 1)
+    fail("a +s() offset reads one i32 or u32; a vector offset is not decoded");
+  v.dyn->view = std::make_shared<const View>(inner);
+  // The indices i with lo <= i * step <= hi keep the view in its allocation.
+  auto it = allocs.find(v.alloc);
+  if (it == allocs.end() || it->second.arena != v.arena)
+    fail("view " + v.address() + " names no " + name(v.arena) + " allocation");
+  const Alloc &a = it->second;
+  int64_t k = width(v.dtype);
+  auto [first, last] = span(v.byte / k, v.free());
+  int64_t step = v.dyn->scale * k, lo = a.byte - first * k;
+  int64_t hi = a.byte + a.rowBytes() - (last + 1) * k;
+  int64_t min = std::numeric_limits<int32_t>::min(), max = std::numeric_limits<int32_t>::max();
+  if (step > 0) {
+    min = std::max(min, -floorDiv(-lo, step));
+    max = std::min(max, floorDiv(hi, step));
+  } else if (step < 0) {
+    min = std::max(min, -floorDiv(hi, -step));
+    max = std::min(max, floorDiv(-lo, -step));
+  } else if (lo > 0 || hi < 0) {
+    min = max + 1;
+  }
+  if (min > max)
+    fail("view " + v.address() + " leaves allocation %" + std::to_string(a.id) +
+         " at every +s() index");
+  v.dyn->first = min;
+  v.dyn->last = max;
+  // Checked at its first index; the rest stay in the allocation.
+  View at = v;
+  at.byte += min * step;
+  at.dyn.reset();
+  check(at);
   return v;
 }
 

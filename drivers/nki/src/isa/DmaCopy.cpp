@@ -11,7 +11,7 @@ namespace {
 class DmaCopy final : public Instruction {
 public:
   explicit DmaCopy(Fields &f) : dst_(f.view("dst")), src_(f.view("src")) {
-    // Checked views make out of bounds always fail.
+    // Checked views refuse out of bounds; a +s() index clamps.
     f.skip("oob_is_err");
     f.skip("engine");
   }

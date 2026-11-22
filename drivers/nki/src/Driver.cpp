@@ -152,15 +152,7 @@ void Driver::execute(Fields &fields) {
 }
 
 void Driver::resolve(Fields &fields) {
-  std::vector<View *> views = fields.views();
-  // A run-time offset reads state: flush, sync, read back.
-  if (offsets(views)) {
-    if (!pipeline_)
-      upload();
-    submit();
-    sync();
-  }
-  for (View *v : views)
+  for (View *v : fields.views())
     *v = accelerator_->resolve(*v);
 }
 
@@ -205,10 +197,6 @@ void Driver::submit() {
   std::string text = module_->text();
   if (!text.empty())
     pipeline_->submit(std::move(text));
-}
-
-void Driver::sync() {
-  pipeline_->sync();
 }
 
 void Driver::finish() {

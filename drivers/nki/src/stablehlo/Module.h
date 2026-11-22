@@ -45,9 +45,9 @@ public:
   // The text is empty when the module holds no ops.
   std::string text();
 
-  // The view's elements, [counts...] in its dtype.
+  // The view's elements, [counts...] in its dtype; a run-time offset gathers on the device.
   int read(const View &view);
-  // Writes the view's dtype and count, in flat order.
+  // Writes the view's dtype and count, in flat order; refuses a run-time offset.
   void write(const View &view, int value);
   // A slot's register lanes [first, first + count), f32[count, 1].
   int readLanes(Slot slot, int64_t first, int64_t count);
@@ -104,6 +104,8 @@ private:
   int index(int64_t value);
   // Refuses lanes past the slot's partitions.
   void lanes(Slot slot, int64_t first, int64_t count) const;
+  // The [P, extent] dtype grid from element first at index low, moved by the view's +s() offset.
+  int window(const View &view, int64_t low, int64_t first, int64_t extent);
   // The arena bitcast to a [P, R/K] dtype grid.
   int bitcastTo(Arena arena, Dtype dtype);
   // The grid bitcast back to the arena's bytes.

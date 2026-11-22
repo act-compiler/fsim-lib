@@ -55,7 +55,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
 - Each later batch loads its samples and replays the first's executables.
 - Extra samples pad the last batch to `B`, and every one is simulated and checked.
-- Above one sample, a parse-only reading first looks for a `+s(...)` run-time offset, which syncs mid-trace.
+- Above one sample, a parse-only reading first looks for a `+s(...)` run-time offset.
   Such a trace runs at a batch size of 1: each sample traces alone, and the pipeline begins its next trace for it.
 - `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32, under either `--sampling` value.
 - `fsim-nki` refuses before the first output byte when the outputs pass half the free space of `--outputs`, or 1 GiB.
@@ -80,7 +80,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 - It takes no `--inputs`, `--outputs` or `--sampling`.
 - It checks that each `output` names a declared allocation.
 - It ends with one line, `checked records=<n> allocs=<n> bank_unchecked=<n>`.
-- `bank_unchecked` counts the `nc_matmul` dsts whose `+s(...)` offset leaves the bank check to run time.
+- `bank_unchecked` counts the `nc_matmul` dsts whose `+s(...)` offset hides the bank, which a run refuses.
 
 ## The record format
 
@@ -176,6 +176,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - `+s(<view>)*<k>`, a run-time offset, adds the index the inner view reads, times `k` elements.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
 - An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
+- A `+s(...)` offset is lowered on a read view; a written view with one is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
 - The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension.
 - `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.
@@ -306,6 +307,13 @@ It lowers to the ops the [StableHLO spec](https://openxla.org/stablehlo/spec) de
 - A pattern that nests only with its entries sorted by stride, outer first, is read in that order and transposed back to the view's.
 - Any other pattern falls back to a gather with a constant index.
 - A zero stride becomes a broadcast back to the full shape.
+- A view with a `+s(...)` offset reads the index, clamps it to the range `Accelerator::resolve` finds, and computes the window's first byte from it.
+  The range holds the index values that keep the view in its allocation.
+- A one-index [gather](https://openxla.org/stablehlo/spec#gather) takes that window from the arena's bytes, every partition, and bitcasts it to the dtype grid.
+- The paths above then read the view from the window as from the arena.
+- The window spans what the path slices: the one-level slice, the nested window, or the gathered elements.
+- A nested view's window stays in the arena row at every index of the range, or the view takes the gather path.
+- An index in its range reads the bytes a constant address would; one outside it clamps, where a constant address past the allocation is refused.
 - The result is `[count_0, ..., count_n]` in the view's dtype.
 - compute: the ops the numpy simulator spells, over f32 converts of the operands.
 - `write`: a nested pattern at partition stride 1 is a dynamic_update_slice of the arena's window, after an update of the delinearized window when the pattern leaves gaps.
@@ -320,9 +328,13 @@ Control and state:
 - `Driver::execute` asks `Pipeline::soft_trigger` for the module's op count before each instruction.
 - When it fires, `Module::text` ends the module and the driver submits its text, and the module starts afresh.
 - Under `overlap`, submitted modules compile on the library's threads while the driver keeps decoding.
-- `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
-- It submits the module, syncs, and reads the index from the arena's host copy, so the offset enters the module as a constant address.
-- `Accelerator::resolve` then checks every view against its allocation, its arena and its dtype's alignment.
+- `Driver::resolve` has `Accelerator::resolve` check every view before the instruction's decode and semantics.
+- It checks each view against:
+  - its allocation
+  - its arena
+  - its dtype's alignment
+- For a `+s(...)` offset, it finds the range of index values that keeps the view in its allocation, and checks the view at the first.
+- The index stays on the device, so no trace needs a mid-trace `sync`, one before its `end`.
 - `nc_matmul` resolves `accumulate` at trace time from a PSUM written mask in `Accelerator`, per allocation:
   - Each PSUM byte holds the allocation that last wrote it, so a new allocation starts unwritten.
   - Any write to PSUM, by a matmul or not, sets its bytes to the view's allocation.
@@ -366,7 +378,7 @@ The limits are trn2's, from the NKI 2.32 docs:
 - The arena bounds hold for every allocation; a kernel-placed one is checked at the kernel's address.
 - A driver-placed tensor already fails at record time when its placement overflows, and `fsim-nki` bounds it again.
 - The bank check holds for every dst, since the recorder places no PSUM tensor that fits a bank across a bank boundary.
-- A dst with a `+s(...)` offset is bank-checked once resolved, and `--validate` counts it in `bank_unchecked`.
+- A dst with a `+s(...)` offset is refused at its write, and `--validate` counts it in `bank_unchecked`.
 - The `xfail` bench source holds one kernel per limit.
   Its gen logs nki's compile path and `nki.simulate` on each kernel, and its run expects `fsim-nki` to reject each:
 

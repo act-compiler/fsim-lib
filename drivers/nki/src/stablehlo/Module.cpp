@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -270,9 +271,30 @@ void Module::retype(Arena arena, Dtype dtype, int value) {
 }
 
 int Module::read(const View &v) {
-  int t = bitcastTo(v.arena, v.dtype);
+  int64_t row = types_[slots_[static_cast<int>(v.arena)]].dims[1] / width(v.dtype);
+  // A run-time offset: the view at its lowest address, the row less the index range's reach.
+  View at = v;
+  int64_t low = 0, reach = 0;
+  if (v.dyn) {
+    low = v.dyn->scale < 0 ? v.dyn->last : v.dyn->first;
+    reach = (v.dyn->last - v.dyn->first) * std::abs(v.dyn->scale);
+    at.byte += low * v.dyn->scale * width(v.dtype);
+    at.dyn.reset();
+  }
+  Geometry g = geometry(at, row - reach);
+  int t;
+  if (v.dyn) {
+    // The paths below read the window gathered at the index.
+    int64_t lo = span(g.e0, g.kept).first;
+    int64_t extent = !g.nested            ? span(g.e0, g.kept).second - lo + 1
+                     : g.kept.size() == 1 ? (g.kept[0].count - 1) * g.kept[0].stride + 1
+                                          : g.window;
+    t = window(v, low, lo, extent);
+    g.e0 -= lo;
+  } else {
+    t = bitcastTo(v.arena, v.dtype);
+  }
   std::vector<int64_t> d = types_[t].dims;
-  Geometry g = geometry(v, d[1]);
   // The kept elements, [pc, kept counts...].
   std::vector<int64_t> tile = {g.pc};
   for (const Entry &e : g.kept)
@@ -318,6 +340,8 @@ int Module::read(const View &v) {
 }
 
 void Module::write(const View &v, int value) {
+  if (v.dyn)
+    fail("a write through view " + v.address() + "'s +s() offset is not lowered");
   if (types_[value].count() != v.count() || types_[value].elem != mlir(v.dtype))
     fail("a write of " + types_[value].str() + " through a view of " + std::to_string(v.count()) +
          " " + mlir(v.dtype));
@@ -369,6 +393,30 @@ void Module::write(const View &v, int value) {
   }
   int flat = scatter(reshape(t, {d[0] * d[1]}), indices(g, d[1]), reshape(value, {v.count()}));
   retype(v.arena, v.dtype, reshape(flat, d));
+}
+
+int Module::window(const View &v, int64_t low, int64_t first, int64_t extent) {
+  auto i64 = [&](int64_t value) { return constant({"i64", {1}}, std::to_string(value)); };
+  // The index, a signed i32 widened to i64[1], clamped to its range.
+  int index = read(*v.dyn->view);
+  if (types_[index].elem != "i32")
+    index = bitcast(index, {"i32", types_[index].dims});
+  index = convert(reshape(index, {1}), "i64");
+  index = binary("minimum", binary("maximum", index, i64(v.dyn->first)), i64(v.dyn->last));
+  // The window's first byte: element first at low, then step bytes per unit of the index.
+  int64_t k = width(v.dtype), step = v.dyn->scale * k;
+  int start = binary("add", binary("multiply", index, i64(step)), i64(first * k - low * step));
+  // Every partition's bytes from start: a gather of one index.
+  int bytes = slots_[static_cast<int>(v.arena)];
+  int64_t partitions = types_[bytes].dims[0];
+  int w = emit("gather", {bytes, start},
+               "dimension_numbers = #stablehlo.gather<offset_dims = [0, 1], start_index_map = "
+               "[1], index_vector_dim = 0>, indices_are_sorted = false, slice_sizes = " +
+                   i64s({partitions, extent * k}),
+               {"ui8", {partitions, extent * k}});
+  if (k == 1)
+    return w;
+  return bitcast(reshape(w, {partitions, extent, k}), {mlir(v.dtype), {partitions, extent}});
 }
 
 void Module::lanes(Slot slot, int64_t first, int64_t count) const {

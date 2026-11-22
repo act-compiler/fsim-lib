@@ -62,15 +62,13 @@ private:
   void scan(const std::string &line);
   // Decodes and runs one instruction, its views resolved.
   void execute(Fields &fields);
-  // Substitutes run-time offsets, then checks every view.
+  // Checks every view, bounding its run-time offset.
   void resolve(Fields &fields);
 
   // Takes the trace's pipeline, which upload_ gives.
   void upload();
   // Submits the module, if it holds ops.
   void submit();
-  // Runs everything submitted, copies state back.
-  void sync();
   // End the trace, fsim's summary, the last submit.
   void finish();
 

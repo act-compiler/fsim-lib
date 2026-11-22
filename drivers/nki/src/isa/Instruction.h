@@ -1,5 +1,5 @@
 // An instruction: one record's decoded fields and its semantics.
-// Its views arrive resolved: no run-time offset, each checked.
+// Its views arrive checked; a run-time offset lowers on the device.
 #pragma once
 
 #include <memory>

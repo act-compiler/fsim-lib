@@ -1,7 +1,6 @@
 // The Accelerator: the arenas' host copies, the reduce and accumulator registers,
 // the allocation table and the PSUM written mask.
 // Host copies are the pipeline's state after a sync, each holding the batch's samples back to back.
-// Host reads during a trace address batch index 0, the first.
 #pragma once
 
 #include <cstdint>
@@ -27,8 +26,6 @@ public:
   int64_t rowBytes(Arena arena) const;
   // Partitions of the arena.
   int64_t partitions(Arena arena) const;
-  // The host byte at a partition and byte, at batch index 0.
-  uint8_t *at(Arena arena, int64_t partition, int64_t byte);
   // The host byte at a partition and byte, in batchIndex's part of the host copy.
   uint8_t *at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex);
   const uint8_t *at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex) const;
@@ -39,7 +36,7 @@ public:
   void reset();
   // Zeroes batchIndex's part of each host copy.
   void zero(uint32_t batchIndex);
-  // The view, its offset read from the host copies, checked.
+  // The view checked; a run-time offset gets its in-allocation range.
   View resolve(const View &view);
   // Marks PSUM bytes written by the view's allocation.
   void wrote(const View &view);

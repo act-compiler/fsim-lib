@@ -33,7 +33,7 @@ public:
       f.fail("src", "is not in hbm or sbuf");
     if (src_.dtype != dst_.dtype || width(src_.dtype) != 2)
       f.fail("src", "is not a 2-byte dtype equal to dst's");
-    // Checked views make out of bounds always fail.
+    // Checked views refuse out of bounds; a +s() index clamps.
     f.skip("oob_is_err");
   }
 
