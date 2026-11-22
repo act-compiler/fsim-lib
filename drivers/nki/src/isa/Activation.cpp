@@ -9,21 +9,15 @@ namespace nki {
 
 namespace {
 
-enum class Fn { copy, exp, log, sqrt, rsqrt, tanh, sigmoid, relu, square, abs, reciprocal };
+enum class Fn { copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal };
 enum class Cmd { idle, reset, reduce, resetReduce, loadReduce };
 
 Fn fn(Fields &f) {
-  static const std::map<std::string, Fn> fns = {{"copy", Fn::copy},
-                                                {"exp", Fn::exp},
-                                                {"log", Fn::log},
-                                                {"sqrt", Fn::sqrt},
-                                                {"rsqrt", Fn::rsqrt},
-                                                {"tanh", Fn::tanh},
-                                                {"sigmoid", Fn::sigmoid},
-                                                {"relu", Fn::relu},
-                                                {"square", Fn::square},
-                                                {"abs", Fn::abs},
-                                                {"reciprocal", Fn::reciprocal}};
+  static const std::map<std::string, Fn> fns = {
+      {"copy", Fn::copy},       {"exp", Fn::exp},     {"log", Fn::log},
+      {"sqrt", Fn::sqrt},       {"rsqrt", Fn::rsqrt}, {"tanh", Fn::tanh},
+      {"sigmoid", Fn::sigmoid}, {"silu", Fn::silu},   {"relu", Fn::relu},
+      {"square", Fn::square},   {"abs", Fn::abs},     {"reciprocal", Fn::reciprocal}};
   std::string op = f.word("op");
   auto it = fns.find(op);
   if (it == fns.end())
@@ -120,6 +114,11 @@ private:
       return module.unary("tanh", x);
     case Fn::sigmoid:
       return module.unary("logistic", x);
+    case Fn::silu:
+      // x / (1 + exp(-x)), as nki.simulate spells it.
+      return module.binary("divide", x,
+                           module.binary("add", module.f32(1.0, dims),
+                                         module.unary("exponential", module.unary("negate", x))));
     case Fn::relu:
       return module.binary("maximum", x, module.f32(0.0, dims));
     case Fn::square:

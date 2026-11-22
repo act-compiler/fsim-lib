@@ -342,6 +342,7 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
 - `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.
+- `activation` `op=silu` is `x / (1 + exp(-x))`, as nki.simulate spells it; the docs list silu over `[-inf, inf]` with no formula ([Supported Activation Functions](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/nki.api.shared.html#tbl-act-func)).
 - `tensor_copy` is a bit copy when `src` and `dst` share a dtype, and casts through f32 otherwise, on every engine, as nki.simulate does.
 - The [nki.isa.tensor_copy](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_copy.html) docs give the bit copy only on GpSimd and Vector, and send Scalar through f32 every time.
 - That f32 convert is lossless for bf16 and f32, apart from NaN payloads.
@@ -368,16 +369,16 @@ Of these, `fsim-nki` decodes the ones in the table.
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode:
 
-| field                                      | decodes                                                                      |
-| ------------------------------------------ | ---------------------------------------------------------------------------- |
-| `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, relu, square, abs, reciprocal    |
-| `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum          |
-| `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power |
-| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                    |
-| `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                              |
-| `nc_matmul` `perf_mode`                    | none                                                                         |
-| `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                               |
-| `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16       |
+| field                                      | decodes                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal |
+| `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum             |
+| `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power    |
+| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                       |
+| `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                                 |
+| `nc_matmul` `perf_mode`                    | none                                                                            |
+| `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                  |
+| `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16          |
 
 ## Scope and limits
 
