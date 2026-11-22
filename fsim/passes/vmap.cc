@@ -219,6 +219,16 @@ mlir::LogicalResult reduce(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
+// Each result batched as its operand.
+mlir::LogicalResult barrier(Batching &batching, mlir::Operation *op) {
+  for (unsigned i = 0; i < op->getNumOperands(); ++i)
+    if (batching.isBatched(op->getOperand(i))) {
+      op->getResult(i).setType(op->getOperand(i).getType());
+      batching.batched.insert(op->getResult(i));
+    }
+  return mlir::success();
+}
+
 // Every result batched.
 mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
   for (unsigned i = 0; i < op->getNumOperands(); ++i)
@@ -238,6 +248,7 @@ const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::BitcastConvertOp::getOperationName(), reshape},
     {hlo::DotGeneralOp::getOperationName(), dotGeneral},
     {hlo::ReduceOp::getOperationName(), reduce},
+    {hlo::OptimizationBarrierOp::getOperationName(), barrier},
     {mlir::func::ReturnOp::getOperationName(), ret},
 };
 
