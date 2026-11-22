@@ -16,6 +16,8 @@ void addPasses(mlir::PassManager &pm) {
   pm.addNestedPass<mlir::func::FuncOp>(createByteGridsPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
+  // Reads ordered before in-place updates, last.
+  pm.addNestedPass<mlir::func::FuncOp>(createOrderReadsPass());
 }
 
 } // namespace fsim

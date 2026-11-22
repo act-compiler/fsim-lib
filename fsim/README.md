@@ -106,7 +106,7 @@ It takes a module's text and returns a versioned StableHLO artifact, which PJRT 
 
 - parse the text into the `func` and `stablehlo` dialects
 - CSE, the stock StableHLO target-independent optimization, canonicalize, CSE
-- the library's own passes, `fsim::addPasses` in `passes/fsim_passes.cc`, in order, with canonicalize and CSE after the first, and `fsim-byte-grids`, canonicalize and CSE again at the end:
+- the library's own passes, `fsim::addPasses` in `passes/fsim_passes.cc`, in order, with canonicalize and CSE after the first, and `fsim-byte-grids`, canonicalize and CSE again before `fsim-order-reads`:
   - `fsim-byte-grids` sinks a bitcast between a `[..., K]` byte grid and `K`-byte elements below the slices, reshapes and updates that use it.
     Byte tensors stay bytes, and bitcasts act on tiles.
     An update of a 2-D byte tensor's `[P, M, K]` grid runs in the byte tensor's own shape.
@@ -115,6 +115,12 @@ It takes a module's text and returns a versioned StableHLO artifact, which PJRT 
     A slice that misses every update reads the chain's head.
   - `fsim-dead-updates` walks a returned value up its chain of single-use updates.
     An update the later ones overwrite is dropped.
+  - `fsim-order-reads` threads a buffer through one `stablehlo.optimization_barrier` per read of it, beside that read, before the update that overwrites it.
+    A read is threaded as the op its single uses lead to, which may be another update, so it stays fused there.
+    When that op cannot move before the update, the read is threaded as itself.
+    XLA then updates the buffer in place, with no copy of it.
+    A read after its update moves before it, with the ops it needs.
+    A buffer is left as is on a second update, a return, a read in another block, or a read whose move needs its update, a region or a side effect.
 - `tf.aliasing_output` on every `@main` argument, so each state tensor updates in place
 - serialize at the StableHLO version jax 0.11.2's XLA accepts
 
