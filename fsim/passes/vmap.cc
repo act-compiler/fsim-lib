@@ -137,6 +137,14 @@ mlir::LogicalResult transpose(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
+// The dimensions shifted by one.
+llvm::SmallVector<int64_t> shifted(llvm::ArrayRef<int64_t> dims) {
+  llvm::SmallVector<int64_t> result;
+  for (int64_t d : dims)
+    result.push_back(d + 1);
+  return result;
+}
+
 // The values with the batch dimension's entry in front.
 llvm::SmallVector<int64_t> leading(int64_t first, llvm::ArrayRef<int64_t> values) {
   llvm::SmallVector<int64_t> result{first};
@@ -184,6 +192,33 @@ mlir::LogicalResult dynamicUpdateSlice(Batching &batching, mlir::Operation *op) 
   return mlir::success();
 }
 
+// The batch dimension is a leading batching dimension of both operands.
+mlir::LogicalResult dotGeneral(Batching &batching, mlir::Operation *op) {
+  auto dot = mlir::cast<hlo::DotGeneralOp>(op);
+  hlo::DotDimensionNumbersAttr numbers = dot.getDotDimensionNumbers();
+  dot.setDotDimensionNumbersAttr(hlo::DotDimensionNumbersAttr::get(
+      op->getContext(), leading(0, shifted(numbers.getLhsBatchingDimensions())),
+      leading(0, shifted(numbers.getRhsBatchingDimensions())),
+      shifted(numbers.getLhsContractingDimensions()),
+      shifted(numbers.getRhsContractingDimensions())));
+  batching.batchOperand(op, 0);
+  batching.batchOperand(op, 1);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
+// The reduced dimensions shift; the scalar inits and the body stay.
+mlir::LogicalResult reduce(Batching &batching, mlir::Operation *op) {
+  auto reduce = mlir::cast<hlo::ReduceOp>(op);
+  if (mlir::failed(scalar(batching, op, reduce.getInitValues(), "init value")))
+    return mlir::failure();
+  reduce.setDimensions(shifted(reduce.getDimensions()));
+  for (unsigned i = 0; i < reduce.getInputs().size(); ++i)
+    batching.batchOperand(op, i);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // Every result batched.
 mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
   for (unsigned i = 0; i < op->getNumOperands(); ++i)
@@ -201,6 +236,8 @@ const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::SliceOp::getOperationName(), slice},
     {hlo::DynamicUpdateSliceOp::getOperationName(), dynamicUpdateSlice},
     {hlo::BitcastConvertOp::getOperationName(), reshape},
+    {hlo::DotGeneralOp::getOperationName(), dotGeneral},
+    {hlo::ReduceOp::getOperationName(), reduce},
     {mlir::func::ReturnOp::getOperationName(), ret},
 };
 
