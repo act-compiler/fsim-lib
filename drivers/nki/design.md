@@ -139,7 +139,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - It refuses a view whose partition stride is not a whole number of partitions.
 - `+s(<view>)*<k>` adds the index the inner view reads, times `k` elements, at run time.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
-- An index view is a single `i32`; a multi-element `+s(...)` view is refused.
+- An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
 - The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension.
 - `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.

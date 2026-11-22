@@ -56,7 +56,7 @@ inline std::pair<int64_t, int64_t> span(int64_t first, const std::vector<Entry> 
 
 struct View;
 
-// Run-time offset: an i32 view's value, times scale.
+// Run-time offset: an i32 or u32 view's value, times scale.
 struct Dyn {
   std::shared_ptr<const View> view;
   int64_t scale = 0;
