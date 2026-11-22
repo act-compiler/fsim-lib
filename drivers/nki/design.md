@@ -112,7 +112,26 @@ reg      := "r" int
 
 A kernel address is used as given, so aliasing, capacity and bank checks are exact for those tensors.
 nkilib's allocator passes `(partition, byte)` to `nl.ndarray` unless it runs in its auto-allocation mode, which passes no address ([nki-library at 92d11f6, allocator.py lines 412-421](https://github.com/aws-neuron/nki-library/blob/92d11f6/src/nkilib_src/nkilib/core/utils/allocator.py#L412-L421)).
-The cte kernels, mlp_tkg and moe place almost every tensor explicitly; the norms, rope, cumsum, the other tkg kernels and attention_tkg, through `create_auto_alloc_manager`, place none.
+These kernels place almost every tensor explicitly:
+
+- attention_cte
+- mlp_cte
+- qkv_cte
+- mlp_tkg
+- moe selective
+
+These place none:
+
+- output_proj_cte
+- moe all_expert
+- the matmul cases
+- the norms
+- rope
+- cumsum
+- qkv_tkg
+- output_proj_tkg
+- attention_tkg
+
 The recorder places a tensor without an address:
 
 - It takes the lowest free gap in the arena that fits, first fit.
@@ -250,7 +269,7 @@ The driver's state is four:
 | `reduce_regs` | `f32[128, 1]`      | the activation engine's reduce registers ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)) |
 
 - SBUF is modelled at the documented 224 KiB per partition.
-- nki's compile path rejects some SBUF ranges below 224 KiB; the docs give no usable size.
+- nki's `nl.tile_size.sbuf_fmax_bytes` gives 212984 usable bytes per partition on trn2, 16 KiB and 8 bytes below 224 KiB; the driver checks the documented bound.
 
 One instruction is one `semantics` call, which reads its views, computes, and writes its destination view.
 A view is an NKI access pattern over a region of one data model.
