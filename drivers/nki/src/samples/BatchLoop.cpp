@@ -22,8 +22,9 @@ template <typename Call> double timed(Call call) {
 
 } // namespace
 
-BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs)
-    : driver_(driver), outputs_(std::move(outputs)), inputs_(std::move(inputs)) {
+BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs,
+                     const std::string &sampling)
+    : driver_(driver), outputs_(std::move(outputs)), inputs_(std::move(inputs), sampling) {
 }
 
 void BatchLoop::run() {

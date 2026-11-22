@@ -3,7 +3,8 @@
 # and <case>/<log>, named by its build and knobs,
 # whose last line is its status: match, wrong, failing, N/A or not generated;
 # an xfail case is xfail or xpass.
-#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [--num-samples N] [bench...]
+#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [--num-samples N] [--sampling S]
+#          [bench...]
 # FSIM_WALL_TIMEOUT caps each run's wall seconds, 60 by default.
 import argparse
 import ctypes
@@ -33,7 +34,7 @@ COMPILERS = [
 ]
 VARIANTS = ['eager', 'taidl', 'trigger', 'overlap']
 KNOBS = {'eager': [], 'taidl': [], 'trigger': ['trigger'], 'overlap': ['trigger', 'overlap']}
-DEFAULTS = {'trigger': 10000, 'overlap': 4, 'num_samples': 1}
+DEFAULTS = {'trigger': 10000, 'overlap': 4, 'num_samples': 1, 'sampling': 'random'}
 # Wall seconds per run, the development cap.
 TIMEOUT = float(os.environ.get('FSIM_WALL_TIMEOUT', '60'))
 
@@ -81,11 +82,13 @@ def gpus():
 
 
 def log_name(compiler, variant, knobs):
-    # <compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>].log: the variant's knobs,
-    # then a sample count not 1.
+    # <compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log:
+    # the variant's knobs, then a sample count not 1 and --sampling modulo.
     names = [compiler, variant] + [str(knobs[k]) for k in KNOBS[variant]]
     if knobs['num_samples'] != DEFAULTS['num_samples']:
         names.append(f'n{knobs["num_samples"]}')
+    if knobs['sampling'] != DEFAULTS['sampling']:
+        names.append(knobs['sampling'])
     return '-'.join(names) + '.log'
 
 
@@ -115,6 +118,8 @@ def simulate(folder, log, timeout, compiler, variant, knobs):
         cmd += [f'--{k}', str(knobs[k])]
     if knobs['num_samples'] != DEFAULTS['num_samples']:
         cmd += ['--num-samples', str(knobs['num_samples'])]
+    if knobs['sampling'] != DEFAULTS['sampling']:
+        cmd += ['--sampling', knobs['sampling']]
     cmd += [os.path.join(folder, 'kernel.trace')]
     limits = f'FSIM_WALL_TIMEOUT={timeout:g}'
     log.write(f'{limits} {" ".join(cmd)}\n')
@@ -277,6 +282,14 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--num-samples', type=int, help=f'samples per run, {DEFAULTS["num_samples"]} by default'
+    )
+    parser.add_argument(
+        '--sampling',
+        choices=['random', 'modulo'],
+        help=(
+            'input set per sample: a uniform draw with replacement, or k mod M for sample k '
+            f'of a case with M input sets, {DEFAULTS["sampling"]} by default'
+        ),
     )
     args = parser.parse_args()
     todo = suite.resolve(suite.load(), args.benches)
