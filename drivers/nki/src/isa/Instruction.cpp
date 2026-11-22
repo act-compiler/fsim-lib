@@ -16,6 +16,7 @@ Decode decoder(const std::string &kind) {
       {"nc_matmul", decodeNcMatmul},
       {"affine_select", decodeAffineSelect},
       {"dma_transpose", decodeDmaTranspose},
+      {"local_gather", decodeLocalGather},
       {"nc_stream_shuffle", decodeNcStreamShuffle},
       {"reciprocal", decodeReciprocal},
       {"select_reduce", decodeSelectReduce},

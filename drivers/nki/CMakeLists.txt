@@ -14,6 +14,7 @@ add_executable(fsim-nki
   src/isa/DmaCopy.cpp
   src/isa/DmaTranspose.cpp
   src/isa/Instruction.cpp
+  src/isa/LocalGather.cpp
   src/isa/Memset.cpp
   src/isa/NcMatmul.cpp
   src/isa/NcStreamShuffle.cpp

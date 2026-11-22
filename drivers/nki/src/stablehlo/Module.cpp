@@ -492,8 +492,12 @@ int Module::gather(int flat, const std::vector<int64_t> &indices) {
   for (size_t i = 0; i < indices.size(); ++i)
     literal += (i ? ", [" : "[") + std::to_string(indices[i]) + "]";
   int64_t n = static_cast<int64_t>(indices.size());
-  int idx = constant({"i32", {n, 1}}, literal + "]");
-  return emit("gather", {flat, idx},
+  return gather(flat, constant({"i32", {n, 1}}, literal + "]"));
+}
+
+int Module::gather(int flat, int indices) {
+  int64_t n = types_[indices].dims[0];
+  return emit("gather", {flat, indices},
               "dimension_numbers = #stablehlo.gather<collapsed_slice_dims = [0], "
               "start_index_map = [0], index_vector_dim = 1>, indices_are_sorted = false, "
               "slice_sizes = array<i64: 1>",
