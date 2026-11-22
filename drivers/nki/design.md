@@ -227,7 +227,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                      |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`                                      |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                          |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
@@ -401,7 +401,8 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal      |
 | `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum                  |
 | `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power         |
-| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                            |
+| `tensor_tensor_arith` `op`, compare        | the six `affine_select` compares, 1.0 or 0.0 in f32; the suite reaches equal         |
+| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum; compares refused                          |
 | `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                                      |
 | `nc_matmul` `perf_mode`                    | none                                                                                 |
 | `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                       |
