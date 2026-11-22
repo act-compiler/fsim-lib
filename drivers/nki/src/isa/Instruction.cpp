@@ -16,6 +16,7 @@ Decode decoder(const std::string &kind) {
       {"nc_matmul", decodeNcMatmul},
       {"affine_select", decodeAffineSelect},
       {"dma_transpose", decodeDmaTranspose},
+      {"reciprocal", decodeReciprocal},
       {"tensor_copy", decodeTensorCopy},
       {"tensor_scalar_arith", decodeTensorScalarArith},
   };

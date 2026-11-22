@@ -359,6 +359,7 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - It ignores `engine`, as nki.simulate does.
 - `dma_transpose` writes `src` permuted by `axes` to `dst` ([nki.isa.dma_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.dma_transpose.html)), in flat order as nki.simulate's `np.transpose` does.
 - It does not check the docs' limits on `src.shape[0]`, which the suite's tiles exceed; nki.simulate does not check them either.
+- `reciprocal` computes `1.0 / data` in f32 and casts to `dst`'s dtype ([nki.isa.reciprocal](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.reciprocal.html)), writing in flat order as nki.simulate does.
 
 ## Coverage
 
@@ -377,6 +378,7 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `tensor_scalar_arith` | qkv_cte, attention, moe                                 |
 | `affine_select`       | qkv_cte, mlp, attention, moe                            |
 | `dma_transpose`       | attention_cte                                           |
+| `reciprocal`          | attention                                               |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
@@ -401,6 +403,7 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `affine_select` `pred`                     | any pattern of `dst`'s elements per partition; another count fails at lowering       |
 | `dma_transpose` `axes`                     | [1, 0], [2, 1, 0], [3, 1, 2, 0], as documented; the suite reaches the last           |
 | `dma_transpose` `src`, `dst`               | equal 2-byte dtypes, `src` in hbm or sbuf, `dst` in sbuf; the suite uses bf16        |
+| `reciprocal` `data` to `dst` dtype         | any pair, through f32; the suite reaches f32 to f32                                  |
 
 ## Scope and limits
 
