@@ -16,6 +16,7 @@ Decode decoder(const std::string &kind) {
       {"nc_matmul", decodeNcMatmul},
       {"affine_select", decodeAffineSelect},
       {"tensor_copy", decodeTensorCopy},
+      {"tensor_scalar_arith", decodeTensorScalarArith},
   };
   auto it = kinds.find(kind);
   if (it != kinds.end())

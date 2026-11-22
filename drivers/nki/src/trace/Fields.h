@@ -45,6 +45,10 @@ public:
   std::optional<bool> optFlag(const std::string &name);
   std::string word(const std::string &name);
   std::optional<std::string> optWord(const std::string &name);
+  // Takes a flag, refusing true.
+  void refuse(const std::string &name);
+  // Takes a field, refusing any value but none.
+  void expectNone(const std::string &name);
   // A number, a view or none.
   Value operand(const std::string &name);
   // Takes the field whatever its value.

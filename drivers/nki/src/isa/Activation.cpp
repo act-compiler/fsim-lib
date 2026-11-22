@@ -3,6 +3,7 @@
 
 #include "accelerator/Accelerator.h"
 #include "isa/Instruction.h"
+#include "isa/Shared.h"
 #include "stablehlo/Module.h"
 
 namespace nki {
@@ -72,9 +73,9 @@ public:
       x = module.reshape(x, dst.shape());
     // Scale, unless a scalar 1.0; then bias, unless none.
     if (!std::holds_alternative<Number>(scale_) || std::get<Number>(scale_).value != 1.0)
-      x = apply(module, "multiply", x, scale_);
+      x = applyOperand(module, "multiply", x, scale_);
     if (!std::holds_alternative<None>(bias_))
-      x = apply(module, "add", x, bias_);
+      x = applyOperand(module, "add", x, bias_);
     int result = compute(module, x);
     if (module.type(result).count() == dst.count())
       result = module.reshape(result, dst.shape());
@@ -84,19 +85,6 @@ public:
   }
 
 private:
-  // x op operand: a scalar, or a unit-padded view.
-  int apply(Module &module, const std::string &op, int x, const Value &operand) const {
-    std::vector<int64_t> dims = module.shape(x);
-    if (auto *n = std::get_if<Number>(&operand))
-      return module.binary(op, x, module.f32(n->value, dims));
-    int v = module.toF32(module.read(std::get<View>(operand)));
-    std::vector<int64_t> padded = module.shape(v);
-    if (padded.size() < dims.size())
-      padded.resize(dims.size(), 1);
-    auto [lhs, rhs] = module.broadcastPair(x, module.reshape(v, padded));
-    return module.binary(op, lhs, rhs);
-  }
-
   int compute(Module &module, int x) const {
     std::vector<int64_t> dims = module.shape(x);
     switch (fn_) {

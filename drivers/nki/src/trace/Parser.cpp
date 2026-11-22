@@ -419,6 +419,16 @@ std::optional<std::string> Fields::optWord(const std::string &name) {
   return std::get<Word>(v).text;
 }
 
+void Fields::refuse(const std::string &name) {
+  if (flag(name))
+    fail(name, "true is not decoded");
+}
+
+void Fields::expectNone(const std::string &name) {
+  if (!std::holds_alternative<None>(take(name)))
+    fail(name, "other than none is not decoded");
+}
+
 Value Fields::operand(const std::string &name) {
   Value v = take(name);
   if (!std::holds_alternative<None>(v) && !std::holds_alternative<Number>(v) &&
