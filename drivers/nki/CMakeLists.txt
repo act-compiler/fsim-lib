@@ -20,6 +20,7 @@ add_executable(fsim-nki
   src/isa/Reciprocal.cpp
   src/isa/SelectReduce.cpp
   src/isa/Shared.cpp
+  src/isa/StreamTranspose.cpp
   src/isa/TensorCopy.cpp
   src/isa/TensorReduce.cpp
   src/isa/TensorScalar.cpp

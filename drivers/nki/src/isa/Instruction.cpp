@@ -19,6 +19,7 @@ Decode decoder(const std::string &kind) {
       {"nc_stream_shuffle", decodeNcStreamShuffle},
       {"reciprocal", decodeReciprocal},
       {"select_reduce", decodeSelectReduce},
+      {"stream_transpose", decodeStreamTranspose},
       {"tensor_copy", decodeTensorCopy},
       {"tensor_scalar_arith", decodeTensorScalarArith},
       {"tensor_tensor_scan", decodeTensorTensorScan},

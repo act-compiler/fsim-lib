@@ -37,6 +37,7 @@ InstructionPtr decodeDmaTranspose(Fields &fields);
 InstructionPtr decodeNcStreamShuffle(Fields &fields);
 InstructionPtr decodeReciprocal(Fields &fields);
 InstructionPtr decodeSelectReduce(Fields &fields);
+InstructionPtr decodeStreamTranspose(Fields &fields);
 InstructionPtr decodeTensorCopy(Fields &fields);
 InstructionPtr decodeTensorScalarArith(Fields &fields);
 InstructionPtr decodeTensorTensorScan(Fields &fields);
