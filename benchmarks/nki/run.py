@@ -1,5 +1,6 @@
 # Runs one fsim-nki build over each case and checks every output.
-# A run writes <case>/out/, removed once checked, and <case>/<log>, named by its build and knobs,
+# A run writes <case>/out/, which keeps only draws.bin once checked,
+# and <case>/<log>, named by its build and knobs,
 # whose last line is its status: match, wrong, failing, N/A or not generated;
 # an xfail case is xfail or xpass.
 #   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [bench...]
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import traceback
 
+import draws
 import ml_dtypes
 import numpy as np
 import suite
@@ -172,28 +174,24 @@ def rel_error(ref, act, floor):
 
 
 def compare(folder, case):
-    # Every golden against its output; returns (cause or None, max error).
+    # Each sample's output against its input set's golden; returns (cause or None, max error).
     worst, over = 0.0, False
     kind, tol, floor = TOLERANCE[case['dtype']]
-    for name in bins(folder, 'golden'):
-        golden = os.path.join(folder, 'golden', name)
-        out = os.path.join(folder, 'out', name)
-        if not os.path.isfile(out):
-            return f'no out/{name}', None
-        size, want = os.path.getsize(out), os.path.getsize(golden)
-        if size != want:
-            return f'out/{name} is {size} B, golden {want} B', None
-        ref = np.fromfile(golden, kind).astype(np.float64)
-        act = np.fromfile(out, kind).astype(np.float64)
-        if ((~np.isfinite(ref) | ~np.isfinite(act)) & (ref != act)).any():
-            return f'out/{name} has nan or inf', None
-        if ref.any() and not act.any():
-            return f'out/{name} is all zero', None
-        rel = rel_error(ref, act, floor)
-        if np.isnan(rel).any():
-            return f'out/{name} has a nan error', None
-        worst = max(worst, float(rel.max()))
-        over |= rel.max() > tol
+    try:
+        indices = draws.read(folder)
+        for name in bins(folder, 'golden'):
+            for where, ref, act in draws.pairs(folder, name, indices, kind):
+                if ((~np.isfinite(ref) | ~np.isfinite(act)) & (ref != act)).any():
+                    return f'{where} has nan or inf', None
+                if ref.any() and not act.any():
+                    return f'{where} is all zero', None
+                rel = rel_error(ref, act, floor)
+                if np.isnan(rel).any():
+                    return f'{where} has a nan error', None
+                worst = max(worst, float(rel.max()))
+                over |= rel.max() > tol
+    except draws.Mismatch as e:
+        return str(e), None
     return ('over tolerance' if over else None), worst
 
 
@@ -242,10 +240,11 @@ def run(case, timeout, compiler, variant, knobs):
             status, cause = 'failing', f'run.py: {type(e).__name__}: {e}'.replace('\n', ' ')
             raise
         finally:
-            # A checked case's out/ goes.
+            # Checked outputs go; out/ keeps only draws.bin.
             out = os.path.join(folder, 'out')
-            if os.path.isdir(out):
-                shutil.rmtree(out)
+            for name in os.listdir(out) if os.path.isdir(out) else []:
+                if name != 'draws.bin':
+                    os.remove(os.path.join(out, name))
             # One status line, none only when interrupted.
             if status:
                 line = f'status: {status}' + (f' ({cause})' if cause else '')

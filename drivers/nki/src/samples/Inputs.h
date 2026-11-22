@@ -24,6 +24,8 @@ public:
   size_t size() const;
   // Zeroes batchIndex's part of each host copy, then reads each input's tensor.
   void load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) const;
+  // The input-set index drawn for each sample.
+  const std::vector<uint32_t> &draws() const;
 
 private:
   std::string dir_;

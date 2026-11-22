@@ -50,4 +50,8 @@ void Inputs::load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) 
   }
 }
 
+const std::vector<uint32_t> &Inputs::draws() const {
+  return draws_;
+}
+
 } // namespace nki

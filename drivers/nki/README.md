@@ -18,12 +18,13 @@ Paths here are relative to the repo root.
 
 - `build.sh nki` builds `fsim-nki` against the library in `fsim/`, at one compiler and variant, `custom-cpu-overlap` by default.
 - `bench.sh gen --isa nki` records each case once into `kernel.trace` in its folder under `benchmarks/nki/`.
-- `bench.sh run --isa nki` hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the outputs against the case's golden.
-- A case's outputs go to `out/` in its folder under `benchmarks/nki/` until checked, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in the same folder.
+- `bench.sh run --isa nki` hands each case's `kernel.trace` to that build's `fsim-nki`, and checks each sample's output against its input set's golden.
+  A sample is one simulation of the trace on one input set, one value of every input tensor with its golden.
+- A case's outputs go to `out/` in its folder under `benchmarks/nki/` until checked, leaving only `out/draws.bin`, and its log to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in the same folder.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace.
 - It simulates `--num-samples` samples, each one simulation of the trace that loads every `--inputs` file.
 - A `--num-samples` past one batch is refused, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
-- Each `--outputs` file `<name>.bin` holds every sample's output back to back.
+- Each `--outputs` file `<name>.bin` holds every sample's output back to back, and `draws.bin` each sample's input-set index.
 - `fsim-nki` ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
 
   ```

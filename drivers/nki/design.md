@@ -30,7 +30,10 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
   - `--variant taidl`
   - `--variant trigger`
 - `bench.sh run --isa nki` runs one build, picked by the same `--compiler` and `--variant`; `README.md`'s Bench lists its flags.
-- It resolves cases as `gen` does and checks `out/out.bin` against `golden/out.bin`.
+- It resolves cases as `gen` does and checks each sample's part of `out/<name>.bin`.
+  A sample is one simulation of the trace on one input set, one value of every input tensor with its golden.
+- The part is checked against the part of `golden/<name>.bin` for the input set `out/draws.bin` gives that sample.
+- The status line's `err` is the worst over every sample.
 - The check is the max relative error, at most the dtype's bound below.
 - Each element's relative error divides by at least a floor of max |golden| times the dtype's fraction:
 
@@ -47,7 +50,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - Samples run together in batches of the library's batch size `B`, which `fsim/README.md` defines.
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
 - A `--num-samples` past one batch of `B` samples is refused.
-- `<outputs>/<name>.bin` holds the output of every simulated sample in order.
+- `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32.
 - `fsim-nki` refuses before the first output byte when the outputs pass half the free space of `--outputs`, or 1 GiB.
 - `--trigger`, `--overlap` and `--num-samples` are the library's knobs.
 - An undecoded instruction kind, a bad record or a refused view fails the run loudly.
@@ -261,7 +264,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                           |
 | `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                       |
 | `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                                 |
-| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check                                    |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                   |
 | `src/main.cpp`                        | the `fsim-nki` command line                                                                                               |
 | `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                              |
 

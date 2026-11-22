@@ -25,6 +25,8 @@ void checkOutputs(const Accelerator &accelerator, const std::vector<Output> &out
                   size_t numSamples, const std::string &dir) {
   uintmax_t total = 0;
   for (const Output &o : outputs) {
+    if (o.name == "draws")
+      throw std::runtime_error("output draws takes the name of " + dir + "/draws.bin");
     const Alloc &a = allocation(accelerator, o);
     total += numSamples * static_cast<uintmax_t>(a.partitions() * a.rowBytes());
   }
@@ -49,6 +51,16 @@ void storeOutputs(const Accelerator &accelerator, const std::vector<Output> &out
     if (!out)
       throw std::runtime_error("cannot write " + path);
   }
+}
+
+void storeDraws(const std::vector<uint32_t> &draws, const std::string &dir) {
+  // The host is little-endian, as setup.sh's x86_64 is.
+  std::string path = dir + "/draws.bin";
+  std::ofstream out(path, std::ios::binary);
+  out.write(reinterpret_cast<const char *>(draws.data()),
+            static_cast<std::streamsize>(draws.size() * sizeof(uint32_t)));
+  if (!out)
+    throw std::runtime_error("cannot write " + path);
 }
 
 } // namespace nki

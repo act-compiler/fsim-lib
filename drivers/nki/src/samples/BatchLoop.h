@@ -23,7 +23,7 @@ public:
   BatchLoop(const BatchLoop &) = delete;
   BatchLoop &operator=(const BatchLoop &) = delete;
 
-  // Simulates every sample, then prints the summary line; called once.
+  // Simulates every sample, prints the summary line, then writes draws.bin; called once.
   void run();
 
 private:

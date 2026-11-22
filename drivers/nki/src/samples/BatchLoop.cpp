@@ -30,6 +30,7 @@ void BatchLoop::run() {
   trace();
   store();
   pipeline_->summary(std::cout);
+  storeDraws(inputs_.draws(), outputs_);
 }
 
 void BatchLoop::add(const Alloc &alloc) {
