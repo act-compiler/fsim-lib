@@ -105,6 +105,38 @@ mlir::LogicalResult constant(Batching &, mlir::Operation *) {
   return mlir::success();
 }
 
+// Operand dimensions shift by one; a batched operand's batch dimension maps to 0.
+mlir::LogicalResult broadcastInDim(Batching &batching, mlir::Operation *op) {
+  auto broadcast = mlir::cast<hlo::BroadcastInDimOp>(op);
+  llvm::SmallVector<int64_t> dims;
+  if (batching.isBatched(broadcast.getOperand()))
+    dims.push_back(0);
+  for (int64_t d : broadcast.getBroadcastDimensions())
+    dims.push_back(d + 1);
+  broadcast.setBroadcastDimensions(dims);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
+// Batched operand, batched result.
+mlir::LogicalResult reshape(Batching &batching, mlir::Operation *op) {
+  batching.batchOperand(op, 0);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
+// The batch dimension stays first; the permutation shifts by one.
+mlir::LogicalResult transpose(Batching &batching, mlir::Operation *op) {
+  auto transpose = mlir::cast<hlo::TransposeOp>(op);
+  llvm::SmallVector<int64_t> permutation{0};
+  for (int64_t d : transpose.getPermutation())
+    permutation.push_back(d + 1);
+  transpose.setPermutation(permutation);
+  batching.batchOperand(op, 0);
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // Every result batched.
 mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
   for (unsigned i = 0; i < op->getNumOperands(); ++i)
@@ -116,6 +148,10 @@ mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
 const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::SelectOp::getOperationName(), elementwise},
     {hlo::ConstantOp::getOperationName(), constant},
+    {hlo::BroadcastInDimOp::getOperationName(), broadcastInDim},
+    {hlo::ReshapeOp::getOperationName(), reshape},
+    {hlo::TransposeOp::getOperationName(), transpose},
+    {hlo::BitcastConvertOp::getOperationName(), reshape},
     {mlir::func::ReturnOp::getOperationName(), ret},
 };
 
