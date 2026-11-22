@@ -207,6 +207,23 @@ mlir::LogicalResult dotGeneral(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
+// The batch dimension slices whole into result dimension 0; batched indices are refused.
+mlir::LogicalResult gather(Batching &batching, mlir::Operation *op) {
+  auto gather = mlir::cast<hlo::GatherOp>(op);
+  if (batching.isBatched(gather.getStartIndices()))
+    return mlir::emitError(op->getLoc()) << "no vmap rule for batched indices of " << op->getName();
+  batching.batchOperand(op, 0);
+  hlo::GatherDimensionNumbersAttr numbers = gather.getDimensionNumbers();
+  gather.setDimensionNumbersAttr(hlo::GatherDimensionNumbersAttr::get(
+      op->getContext(), leading(0, shifted(numbers.getOffsetDims())),
+      shifted(numbers.getCollapsedSliceDims()), shifted(numbers.getOperandBatchingDims()),
+      numbers.getStartIndicesBatchingDims(), shifted(numbers.getStartIndexMap()),
+      numbers.getIndexVectorDim()));
+  gather.setSliceSizes(leading(batching.batch_size, gather.getSliceSizes()));
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // The reduced dimensions shift; the scalar inits and the body stay.
 mlir::LogicalResult reduce(Batching &batching, mlir::Operation *op) {
   auto reduce = mlir::cast<hlo::ReduceOp>(op);
@@ -247,6 +264,7 @@ const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::DynamicUpdateSliceOp::getOperationName(), dynamicUpdateSlice},
     {hlo::BitcastConvertOp::getOperationName(), reshape},
     {hlo::DotGeneralOp::getOperationName(), dotGeneral},
+    {hlo::GatherOp::getOperationName(), gather},
     {hlo::ReduceOp::getOperationName(), reduce},
     {hlo::OptimizationBarrierOp::getOperationName(), barrier},
     {mlir::func::ReturnOp::getOperationName(), ret},
