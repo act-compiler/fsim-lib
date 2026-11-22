@@ -30,6 +30,9 @@ jobs:
           --bench nkilib/rmsnorm_tkg
           --bench nkilib/layernorm_tkg
           --bench nkilib/qkv_tkg
+          --bench nkilib/rope
+          --bench nkilib/output_proj_tkg/llama3_8b_tp4_batch1
+          --bench nkilib/output_proj_cte/llama3_8b_tp4_seq512
           --bench xfail
           --bench matmul
 
@@ -41,5 +44,8 @@ jobs:
           --bench nkilib/rmsnorm_tkg
           --bench nkilib/layernorm_tkg
           --bench nkilib/qkv_tkg
+          --bench nkilib/rope
+          --bench nkilib/output_proj_tkg/llama3_8b_tp4_batch1
+          --bench nkilib/output_proj_cte/llama3_8b_tp4_seq512
           --bench xfail
           --bench matmul

@@ -1,6 +1,7 @@
 // dma_copy: a bit copy, or an f32 convert.
 #include "accelerator/Accelerator.h"
 #include "isa/Instruction.h"
+#include "isa/Shared.h"
 #include "stablehlo/Module.h"
 
 namespace nki {
@@ -16,11 +17,7 @@ public:
   }
 
   void semantics(Accelerator &accelerator, Module &module) const override {
-    int value = module.read(src_);
-    if (src_.dtype != dst_.dtype)
-      value = module.toDtype(module.toF32(value), dst_.dtype);
-    module.write(dst_, value);
-    accelerator.wrote(dst_);
+    copyView(accelerator, module, dst_, src_);
   }
 
 private:

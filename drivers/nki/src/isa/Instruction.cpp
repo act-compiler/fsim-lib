@@ -14,6 +14,7 @@ Decode decoder(const std::string &kind) {
       {"tensor_tensor_arith", decodeTensorTensorArith},
       {"tensor_reduce_arith", decodeTensorReduceArith},
       {"nc_matmul", decodeNcMatmul},
+      {"tensor_copy", decodeTensorCopy},
   };
   auto it = kinds.find(kind);
   if (it != kinds.end())

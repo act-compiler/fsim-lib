@@ -14,6 +14,8 @@ add_executable(fsim-nki
   src/isa/Instruction.cpp
   src/isa/Memset.cpp
   src/isa/NcMatmul.cpp
+  src/isa/Shared.cpp
+  src/isa/TensorCopy.cpp
   src/isa/TensorReduce.cpp
   src/isa/TensorTensor.cpp
   src/stablehlo/Module.cpp
