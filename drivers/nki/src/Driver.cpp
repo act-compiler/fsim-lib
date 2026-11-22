@@ -9,6 +9,7 @@
 #include "fsim/pipeline.h"
 #include "fsim/runtime.h"
 #include "isa/Instruction.h"
+#include "samples/Outputs.h"
 #include "trace/Parser.h"
 
 namespace nki {
@@ -77,7 +78,9 @@ void Driver::record(const std::string &line) {
     // Inputs load before the upload, at the first step.
     if (!a->input.empty() && pipeline_)
       throw std::runtime_error("input " + a->input + " after the first instruction");
-    accelerator_->allocate(*a, inputs_);
+    accelerator_->allocate(*a);
+    if (!a->input.empty())
+      inputs_.add(*a);
   } else if (auto *f = std::get_if<Fields>(&r)) {
     execute(*f);
   } else if (auto *o = std::get_if<Output>(&r)) {
@@ -139,6 +142,7 @@ void Driver::check(const std::string &line) {
 }
 
 void Driver::upload() {
+  inputs_.load(*accelerator_);
   runtime_ = std::make_unique<fsim::Runtime>();
   pipeline_ = std::make_unique<fsim::Pipeline>(*runtime_, state(*accelerator_));
   // The run clock starts after the upload.
@@ -165,8 +169,7 @@ void Driver::finish() {
   sync();
   // The output stores stay out of the run's clock.
   auto begin = std::chrono::steady_clock::now();
-  for (const Output &o : kernel_.outputs)
-    accelerator_->store(o, outputs_);
+  storeOutputs(*accelerator_, kernel_.outputs, outputs_);
   pipeline_->exclude(
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count());
   pipeline_->summary(std::cout);

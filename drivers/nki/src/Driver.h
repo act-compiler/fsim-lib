@@ -10,6 +10,7 @@
 #include <string>
 
 #include "accelerator/Accelerator.h"
+#include "samples/Inputs.h"
 #include "stablehlo/Module.h"
 #include "trace/Fields.h"
 #include "trace/Kernel.h"
@@ -48,7 +49,8 @@ private:
   // Submit, sync, outputs, fsim's summary.
   void finish();
 
-  std::string inputs_, outputs_;
+  Inputs inputs_;
+  std::string outputs_;
   bool validate_;
   Kernel kernel_;
   // The checked allocations, validating.

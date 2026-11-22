@@ -27,8 +27,8 @@ public:
   // The host byte at a partition and byte.
   uint8_t *at(Arena arena, int64_t partition, int64_t byte);
 
-  // Records an allocation and loads its input.
-  void allocate(const Alloc &alloc, const std::string &inputs);
+  // Records an allocation.
+  void allocate(const Alloc &alloc);
   // The view, its offset read from the host copies, checked.
   View resolve(const View &view);
   // Marks PSUM bytes written by the view's allocation.
@@ -37,8 +37,6 @@ public:
   std::vector<bool> started(const View &view) const;
   // Clears the mask over the view's allocation, and its clobbered entry.
   void restart(const View &view);
-  // Writes an output's bytes to <dir>/<name>.bin.
-  void store(const Output &output, const std::string &dir) const;
   // Refuses the view's allocation if another overwrote it.
   void unclobbered(const View &view) const;
 

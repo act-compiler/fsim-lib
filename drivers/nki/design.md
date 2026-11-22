@@ -53,7 +53,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 ```
 
 - [fsim/README.md](../../fsim/README.md) defines its fields.
-- The run's clock starts after the state's upload, at the first instruction, so it leaves out the header, the allocations, the input loads and the output stores.
+- The run's clock starts after the state's upload, at the first instruction, and leaves out the header, the allocations and every input load and output store.
 - The trace ends at `end`, with `trace` the instructions run.
 - The line prints at `end`, so a run killed in the final sync keeps it, and again after the outputs are written.
 - `bench.sh run` reads the last line into its status line.
@@ -232,7 +232,8 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 1. `src/trace/`
 2. `src/accelerator/` and `src/stablehlo/`, each over `trace/` alone
 3. `src/isa/`
-4. `src/Driver.{h,cpp}` and `src/main.cpp`
+4. `src/Driver.{h,cpp}`
+5. `src/samples/` and `src/main.cpp`
 
 | path                                  | role                                                                                                                    |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -251,6 +252,8 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
 | `src/Driver.{h,cpp}`                  | `Driver`: `run()` over a file or stdin; `resolve`; upload, soft trigger, submit, sync, read-back and the evaluation log |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                               |
+| `src/samples/Outputs.{h,cpp}`         | the outputs into `<outputs>/<name>.bin`                                                                                 |
 | `src/main.cpp`                        | the `fsim-nki` command line                                                                                             |
 | `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                            |
 

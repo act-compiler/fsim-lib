@@ -27,6 +27,8 @@ add_executable(fsim-nki
   src/isa/TensorScalar.cpp
   src/isa/TensorTensor.cpp
   src/isa/TensorTensorScan.cpp
+  src/samples/Inputs.cpp
+  src/samples/Outputs.cpp
   src/stablehlo/Module.cpp
   src/trace/Kernel.cpp
   src/trace/Parser.cpp

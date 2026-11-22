@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <stdexcept>
 
 #include "accelerator/Limits.h"
@@ -74,22 +73,9 @@ uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte) {
   return bytes.data() + partition * rowBytes(arena) + byte;
 }
 
-void Accelerator::allocate(const Alloc &a, const std::string &inputs) {
+void Accelerator::allocate(const Alloc &a) {
   checkAlloc(allocs, a, static_cast<int64_t>(hbm.size()));
   allocs.emplace(a.id, a);
-  if (a.input.empty())
-    return;
-  if (a.arena != Arena::hbm)
-    fail("input " + a.input + " is not in hbm");
-  std::string path = inputs + "/" + a.input + ".bin";
-  std::ifstream in(path, std::ios::binary | std::ios::ate);
-  if (!in)
-    fail("cannot read " + path);
-  if (static_cast<int64_t>(in.tellg()) != a.rowBytes())
-    fail(path + " holds " + std::to_string(in.tellg()) + " bytes, input " + a.input + " " +
-         std::to_string(a.rowBytes()));
-  in.seekg(0);
-  in.read(reinterpret_cast<char *>(at(Arena::hbm, 0, a.byte)), a.rowBytes());
 }
 
 void Accelerator::check(const View &v) const {
@@ -210,23 +196,6 @@ void Accelerator::unclobbered(const View &v) const {
   if (it != clobbered.end())
     fail("psum allocation %" + std::to_string(v.alloc) + " accumulates after allocation %" +
          std::to_string(it->second) + " overwrote its bytes; aliased accumulation is refused");
-}
-
-void Accelerator::store(const Output &o, const std::string &dir) const {
-  auto it = allocs.find(o.id);
-  if (it == allocs.end())
-    fail("output " + o.name + " names no allocation %" + std::to_string(o.id));
-  const Alloc &a = it->second;
-  std::string path = dir + "/" + o.name + ".bin";
-  std::ofstream out(path, std::ios::binary);
-  const std::vector<uint8_t> &bytes = a.arena == Arena::hbm    ? hbm
-                                      : a.arena == Arena::sbuf ? sbuf
-                                                               : psum;
-  for (int64_t p = a.partition; p < a.partition + a.partitions(); ++p)
-    out.write(reinterpret_cast<const char *>(bytes.data() + p * rowBytes(a.arena) + a.byte),
-              a.rowBytes());
-  if (!out)
-    fail("cannot write " + path);
 }
 
 } // namespace nki
