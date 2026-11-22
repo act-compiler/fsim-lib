@@ -75,7 +75,7 @@ public:
   // A snapshot of the stats; complete after sync().
   Stats stats() const;
 
-  // Restarts the run's clock, started at construction.
+  // Starts the run's clock anew, as at construction; called before the first submit.
   void begin_run();
   // Ends the driver's trace of trace_length instructions.
   void end_trace(size_t trace_length);
@@ -88,6 +88,8 @@ public:
   // B, the batch size for --num-samples N and one sample's state.
   // Throws when one sample passes the host's or the device's limit.
   static uint32_t batch_size(const Runtime &runtime, const std::vector<Tensor> &state);
+  // Begins the run's next trace: uploads the state anew from the host memory.
+  void begin_trace();
   // Leaves ms of a driver's loads and stores out of the run's clock.
   void exclude(double ms);
 

@@ -94,6 +94,13 @@ void Accelerator::allocate(const Alloc &a) {
   allocs.emplace(a.id, a);
 }
 
+void Accelerator::reset() {
+  allocs.clear();
+  for (std::map<int64_t, Owner> &row : written)
+    row.clear();
+  clobbered.clear();
+}
+
 void Accelerator::zero(uint32_t batchIndex) {
   auto zero = [&](auto &array, int64_t size) {
     std::fill_n(array.begin() + batchIndex * size, size, 0);

@@ -108,10 +108,12 @@ struct Pipeline::Impl {
 
   // The run's clock and marks, on the caller's thread.
   Clock::time_point begin = Clock::now();
-  std::optional<double> tracing_ms;
+  Clock::time_point trace_begin = begin; // the current trace's start
+  std::optional<double> tracing_ms;      // summed over traces
   std::optional<size_t> trace_length;
   bool synced = false;  // a sync() has run
   bool settled = false; // the last sync() returned, no submit since
+  size_t first = 0;     // the current trace's first module
 
   // Guarded by mutex.
   mutable std::mutex mutex;
@@ -134,6 +136,8 @@ struct Pipeline::Impl {
 
   // Uploads the state and starts the threads; ~Impl undoes a throw.
   void start();
+  // Uploads the state's host memory, replacing the state buffers.
+  void upload();
 
   // Ms elapsed since begin.
   static double ms_since(Clock::time_point begin) {
@@ -164,7 +168,20 @@ Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, uint32_
 }
 
 void Pipeline::Impl::start() {
-  // One device buffer per state tensor.
+  upload();
+#ifdef FSIM_VARIANT_OVERLAP
+  stats.waits.emplace();
+  for (uint32_t i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
+    workers.emplace_back(&Impl::compile_loop, this);
+  executor = std::thread(&Impl::execute_loop, this);
+#endif
+}
+
+void Pipeline::Impl::upload() {
+  // The old state goes; one device buffer per state tensor, the batch's samples in it.
+  for (PJRT_Buffer *buffer : buffers)
+    rt.destroy(buffer);
+  buffers.clear();
   buffers.reserve(state.size());
   for (size_t i = 0; i < state.size(); ++i) {
     PJRT_Client_BufferFromHostBuffer_Args args{};
@@ -180,12 +197,6 @@ void Pipeline::Impl::start() {
     buffers.push_back(args.buffer);
     rt.await(args.done_with_host_buffer);
   }
-#ifdef FSIM_VARIANT_OVERLAP
-  stats.waits.emplace();
-  for (uint32_t i = 0, threads = knobs.threads.value_or(4); i < threads; ++i)
-    workers.emplace_back(&Impl::compile_loop, this);
-  executor = std::thread(&Impl::execute_loop, this);
-#endif
 }
 
 Pipeline::Impl::~Impl() {
@@ -501,10 +512,10 @@ void Pipeline::submit(std::string module) {
   if (impl_->error)
     std::rethrow_exception(impl_->error);
 #ifdef FSIM_VARIANT_TAIDL
-  // One module per run; a second is the pipeline's error.
-  if (!impl_->stats.modules.empty()) {
+  // One module per trace; a second is the pipeline's error.
+  if (impl_->stats.modules.size() > impl_->first) {
     impl_->error = std::make_exception_ptr(std::runtime_error(
-        "fsim: a second module; this build runs one module at the end of the run"));
+        "fsim: a second module; this build runs one module at the end of the trace"));
     std::rethrow_exception(impl_->error);
   }
 #endif
@@ -558,18 +569,32 @@ void Pipeline::exclude(double ms) {
       std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
 }
 
+void Pipeline::begin_trace() {
+  // The threads idle after the last sync, so the caller drives the device.
+  impl_->upload();
+  impl_->settled = false;
+  impl_->trace_length.reset();
+  {
+    std::lock_guard lock(impl_->mutex);
+    impl_->first = impl_->stats.modules.size();
+  }
+  impl_->trace_begin = Clock::now();
+}
+
 Stats Pipeline::stats() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->stats;
 }
 
 void Pipeline::begin_run() {
-  impl_->begin = Clock::now();
+  impl_->begin = impl_->trace_begin = Clock::now();
 }
 
 void Pipeline::end_trace(size_t trace_length) {
-  impl_->tracing_ms = Impl::ms_since(impl_->begin);
+  impl_->tracing_ms = impl_->tracing_ms.value_or(0) + Impl::ms_since(impl_->trace_begin);
   impl_->trace_length = trace_length;
+  // The trace's last modules follow, so the stats wait for a sync.
+  impl_->settled = false;
 }
 
 void Pipeline::summary(std::ostream &out) const {

@@ -28,23 +28,41 @@ BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs,
 }
 
 void BatchLoop::run() {
+  // Above one sample, a trace with a run-time offset runs at a batch size of 1.
+  runtimeOffset_ = fsim::Pipeline::num_samples() > 1 && driver_.hasRuntimeOffset();
   trace();
   store();
+  // Each later batch traces again when the trace has a run-time offset.
+  for (first_ = batchSize_; first_ < inputs_.size(); first_ += batchSize_) {
+    if (runtimeOffset_) {
+      trace();
+    }
+    store();
+  }
   pipeline_->summary(std::cout);
   storeDraws(inputs_.draws(), outputs_);
 }
 
 void BatchLoop::add(const Alloc &alloc) {
-  inputs_.add(alloc);
+  if (!pipeline_)
+    inputs_.add(alloc);
 }
 
 fsim::Pipeline &BatchLoop::upload() {
-  // B; N draws.
+  // A later trace's loads stay out of the run's clock.
+  if (pipeline_) {
+    pipeline_->exclude(timed([&] { load(); }));
+    pipeline_->begin_trace();
+    return *pipeline_;
+  }
+  // B, or 1 with a run-time offset; N draws.
   batchSize_ = fsim::Pipeline::batch_size(runtime_, driver_.state());
   // One batch holds every sample.
-  if (batchSize_ < fsim::Pipeline::num_samples())
+  if (!runtimeOffset_ && batchSize_ < fsim::Pipeline::num_samples())
     throw std::runtime_error("--num-samples " + std::to_string(fsim::Pipeline::num_samples()) +
                              " passes one batch of " + std::to_string(batchSize_) + " samples");
+  if (runtimeOffset_)
+    batchSize_ = 1;
   inputs_.draw((size_t{fsim::Pipeline::num_samples()} + batchSize_ - 1) / batchSize_ * batchSize_);
   driver_.accelerator().hold(batchSize_);
   load();
