@@ -26,8 +26,8 @@ Paths here are relative to the repo root.
 - `fsim-nki` simulates `--num-samples` samples, each with its input set drawn by `--sampling`:
   - `random`, the default: a uniform draw with replacement, from a fixed seed
   - `modulo`: sample `k` takes input set `k mod M` of the case's `M` input sets, so `--num-samples 1` runs input set 0
-- A `--num-samples` past one batch is refused, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
-  A trace with a `+s()` run-time offset is not refused: above one sample, it runs at a batch size of 1, each sample alone.
+- The count rounds up to whole batches, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
+  It is exactly `--num-samples` when the trace has a run-time offset.
 - Each `--outputs` file `<name>.bin` holds every sample's output back to back, and `draws.bin` each sample's input-set index.
 - `fsim-nki` ends with its evaluation log, fsim's summary line, which [design.md](design.md) explains:
 

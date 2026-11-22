@@ -53,7 +53,8 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - Loading a sample zeroes its state, then reads each input's tensor from its input set.
 - Samples run together in batches of the library's batch size `B`, which `fsim/README.md` defines.
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
-- A `--num-samples` past one batch of `B` samples is refused, unless the trace has a run-time offset.
+- Each later batch loads its samples and replays the first's executables.
+- Extra samples pad the last batch to `B`, and every one is simulated and checked.
 - Above one sample, a parse-only reading first looks for a `+s(...)` run-time offset, which syncs mid-trace.
   Such a trace runs at a batch size of 1: each sample traces alone, and the pipeline begins its next trace for it.
 - `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32, under either `--sampling` value.
@@ -269,7 +270,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                  |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text          |
 | `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, a parse-only reading for `+s(...)` offsets, `resolve`, soft trigger |
-| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples, and a batch size of 1 for a trace with a `+s(...)` offset              |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over a run's batches, replay, and a batch size of 1 for a trace with a `+s(...)` offset               |
 | `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                       |
 | `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                     |
 | `src/main.cpp`                        | the `fsim-nki` command line                                                                                                 |

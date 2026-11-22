@@ -96,9 +96,17 @@ Each state tensor's host memory holds the batch's samples back to back, and abov
 - `sync` hands each of the batch's samples back to its own part.
 - Above a batch size of 1, a mid-trace `sync`, one before `end_trace`, throws, so a driver that needs one runs at a batch size of 1.
 
+At an `N` above `B`, the pipeline keeps every executable it runs, in submission order, until it is destroyed, begins the next trace or runs a mid-trace `sync`.
+`Pipeline::replay()` replays them over the state's host memory, whose every byte the driver first loads with the next batch's samples, since `sync` left the last outputs there:
+
+- It uploads every state tensor anew from the constructor's host memory.
+- It executes the kept executables in order on the caller's thread, adding each one's execute ms to its stats.
+- A `sync` then hands the samples back, as after a `submit`.
+
 `Pipeline::begin_trace()` begins the next trace on the same pipeline, for a driver that traces each sample again:
 
 - It uploads every state tensor anew from the host memory.
+- The kept executables go, and nothing replays after it.
 - The trace's `tracing` clock starts there, and its modules add to the stats.
 
 `Pipeline::exclude(ms)` leaves `ms` of a driver's loads and stores out of the run's clock.
@@ -127,14 +135,14 @@ Times are seconds to 3 decimals, and a value not yet known prints `-`:
 | ------------------ | --------------------------------------------------------------- | ------------------------- |
 | `tracing`          | the clock at `end_trace`, summed over the run's traces          | `end_trace`               |
 | `overhead`         | `wall` minus `simulation`                                       | a clean `sync` of modules |
-| `simulation`       | the modules' execute time                                       | a clean `sync` of modules |
+| `simulation`       | the modules' execute time, every replay's included              | a clean `sync` of modules |
 | `tracing_overhead` | `overhead` minus `compile_overhead`                             | a clean `sync` of modules |
 | `compile_overhead` | `waits.compile_ms` in `overlap`, else the modules' compile time | a clean `sync` of modules |
 | `wall`             | the clock at `summary`, less every `exclude`                    | any `sync`, failed or not |
 | `trace`            | `end_trace`'s instruction count                                 | `end_trace`               |
 | `modules`          | the submitted module count                                      | a clean `sync` of modules |
 
-- A clean `sync` of modules returned, with at least one module submitted and no submit or `end_trace` since.
+- A clean `sync` of modules returned, with at least one module submitted and no submit, replay or `end_trace` since.
 - Outside `overlap`, `submit` compiles and runs its module, so a submit inside the trace counts in `tracing`.
 
 The pass stage is `fsim_passes`, a shared object with only `passes.h`'s C entry visible, so its static MLIR never meets a driver's LLVM.
