@@ -1,11 +1,15 @@
 #include "samples/Outputs.h"
 
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 
 namespace nki {
 
 namespace {
+
+// Every simulated sample's outputs together, 1 GiB at most.
+constexpr uintmax_t kOutputCap = uintmax_t{1} << 30;
 
 // The output's allocation; refuses a missing one.
 const Alloc &allocation(const Accelerator &accelerator, const Output &o) {
@@ -16,6 +20,21 @@ const Alloc &allocation(const Accelerator &accelerator, const Output &o) {
 }
 
 } // namespace
+
+void checkOutputs(const Accelerator &accelerator, const std::vector<Output> &outputs,
+                  size_t numSamples, const std::string &dir) {
+  uintmax_t total = 0;
+  for (const Output &o : outputs) {
+    const Alloc &a = allocation(accelerator, o);
+    total += numSamples * static_cast<uintmax_t>(a.partitions() * a.rowBytes());
+  }
+  uintmax_t room = std::filesystem::space(dir).available;
+  if (total > room / 2 || total > kOutputCap)
+    throw std::runtime_error(std::to_string(numSamples) + " samples' outputs take " +
+                             std::to_string(total) + " bytes, past half the " +
+                             std::to_string(room) + " bytes free on " + dir + " or the " +
+                             std::to_string(kOutputCap) + "-byte cap");
+}
 
 void storeOutputs(const Accelerator &accelerator, const std::vector<Output> &outputs,
                   uint32_t batchIndex, size_t sample, const std::string &dir) {

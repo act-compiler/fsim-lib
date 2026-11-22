@@ -30,6 +30,10 @@ void Inputs::draw(size_t count) {
   draws_.resize(count);
 }
 
+size_t Inputs::size() const {
+  return draws_.size();
+}
+
 void Inputs::load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) const {
   accelerator.zero(batchIndex);
   // Each input's tensor of input set s sits at s times its bytes.

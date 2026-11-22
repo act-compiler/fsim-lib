@@ -20,6 +20,8 @@ public:
   void add(const Alloc &alloc);
   // Draws count samples' input sets.
   void draw(size_t count);
+  // The count of samples whose input set is drawn.
+  size_t size() const;
   // Zeroes batchIndex's part of each host copy, then reads each input's tensor.
   void load(Accelerator &accelerator, uint32_t batchIndex, size_t sample) const;
 
