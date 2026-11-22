@@ -278,14 +278,16 @@ Control and state:
 - `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
 - It submits the module, syncs, and reads the index from the arena's host copy, so the offset enters the module as a constant address.
 - `Accelerator::resolve` then checks every view against its allocation, its arena and its dtype's alignment.
-- `nc_matmul` resolves `accumulate` at trace time from a per-byte PSUM written mask in `Accelerator`:
-  - A PSUM allocation, kernel-placed or driver-placed, clears the mask over its bytes.
-  - Any write to PSUM, by a matmul or not, sets its bytes.
+- `nc_matmul` resolves `accumulate` at trace time from a PSUM written mask in `Accelerator`, per allocation:
+  - Each PSUM byte holds the allocation that last wrote it, so a new allocation starts unwritten.
+  - Any write to PSUM, by a matmul or not, sets its bytes to the view's allocation.
   - `true` adds onto the tile.
-  - `false` clears the mask over the newest PSUM allocation holding the destination, then overwrites.
-  - `none` adds where the tile was written and overwrites elsewhere.
+  - `false` clears the mask over the destination's allocation, then overwrites.
+  - `none` adds where the destination's allocation wrote the tile and overwrites elsewhere.
   - `none` with `is_transpose=true` always overwrites.
-  - This is nki.simulate's per-tensor rule while no two live PSUM tensors overlap, since a view names no tensor.
+  - A write by another allocation at the same bytes overwrites them, since the bytes alias.
+  - It matches nki.simulate except when aliased allocations interleave writes.
+  - So `true`, or a non-transposing `none`, on an allocation whose bytes another overwrote is refused, until an `accumulate=false` write restarts it.
 - The reduce register lanes index from the operand's partition start, and `reduce_res` reads them.
 - `reduce_cmd=reset` zeroes them, `reset_reduce` stores the reduction, and `reduce` adds it on.
 - `activation` refuses a `reduce_op` other than `add` with `reduce` or `reset_reduce`, since the ISA reduces by add only ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)).
@@ -333,7 +335,7 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 
 - Where the NKI 2.32 docs are silent, call a pattern undefined, or contradict each other, the driver follows nki.simulate.
 - So it accepts the documented contradictions the suite relies on, as nki.simulate and the compiler do: `nc_matmul` at `col_pos` (start_column) 32, 64 or 96 ([nki.isa.nc_matmul](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_matmul.html)), and a transposing `nc_matmul` whose dst is in its input's dtype, bf16 ([nki.isa.nc_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_transpose.html)).
-- `nc_matmul` with `accumulate=none` adds onto a PSUM tile that a `memset` or copy wrote, as nki.simulate does; the docs call this undefined on trn2.
+- `nc_matmul` with `accumulate=none` adds onto a PSUM tile that a `memset` or copy wrote, as nki.simulate does, when the write was through the same allocation; the docs call this undefined on trn2.
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
 - `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.

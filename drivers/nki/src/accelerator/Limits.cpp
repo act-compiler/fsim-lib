@@ -33,17 +33,6 @@ void arena(const View &v, Arena want, const char *operand) {
 
 } // namespace
 
-const Alloc *holder(const std::map<int64_t, Alloc> &allocs, const View &v) {
-  for (auto it = allocs.rbegin(); it != allocs.rend(); ++it) {
-    const Alloc &a = it->second;
-    if (a.arena == v.arena && v.partition >= a.partition &&
-        v.partition < a.partition + a.partitions() && v.byte >= a.byte &&
-        v.byte < a.byte + a.rowBytes())
-      return &a;
-  }
-  return nullptr;
-}
-
 void checkAlloc(const std::map<int64_t, Alloc> &allocs, const Alloc &a, int64_t hbm) {
   if (allocs.count(a.id))
     fail("allocation %" + str(a.id) + " declared twice");

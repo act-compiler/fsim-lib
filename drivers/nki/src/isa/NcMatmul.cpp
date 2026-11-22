@@ -47,9 +47,12 @@ public:
     result = module.reshape(result, dst.shape());
     // Per element, whether it adds onto the tile.
     std::vector<bool> adds(dst.count(), accumulate_ == true);
+    // Only a write that may add refuses a clobbered tile.
     if (accumulate_ == false)
       accelerator.restart(dst);
-    else if (!accumulate_ && !isTranspose_)
+    else if (accumulate_ == true || !isTranspose_)
+      accelerator.unclobbered(dst);
+    if (!accumulate_ && !isTranspose_)
       adds = accelerator.started(dst);
     if (std::find(adds.begin(), adds.end(), true) != adds.end()) {
       int sum = module.binary("add", module.toF32(module.read(dst)), result);

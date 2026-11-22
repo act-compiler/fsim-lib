@@ -22,11 +22,35 @@ int64_t capacity(int64_t hbm) {
   return hbm;
 }
 
+// Calls f(partition, element, n) per span of n adjacent elements.
+template <class F> void spans(const View &v, F f) {
+  if (v.pattern.size() < 2 || v.pattern.back().stride != 1) {
+    v.each([&](int64_t p, int64_t e) { f(p, e, 1); });
+    return;
+  }
+  View rows = v;
+  rows.pattern.back().count = 1;
+  int64_t n = v.pattern.back().count;
+  rows.each([&](int64_t p, int64_t e) { f(p, e, n); });
+}
+
+// Splits the span across byte at, so one starts there.
+void cut(std::map<int64_t, Accelerator::Owner> &row, int64_t at) {
+  auto it = row.upper_bound(at);
+  if (it == row.begin())
+    return;
+  --it;
+  if (it->first < at && it->second.end > at) {
+    row.emplace(at, it->second);
+    it->second.end = at;
+  }
+}
+
 } // namespace
 
 Accelerator::Accelerator(int64_t hbm)
     : hbm(capacity(hbm)), sbuf(kPartitions * kSbufRow), psum(kPartitions * kPsumRow),
-      reduceRegs(kPartitions), written(kPartitions * kPsumRow) {
+      reduceRegs(kPartitions), written(kPartitions) {
 }
 
 int64_t Accelerator::rowBytes(Arena arena) const {
@@ -53,9 +77,6 @@ uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte) {
 void Accelerator::allocate(const Alloc &a, const std::string &inputs) {
   checkAlloc(allocs, a, static_cast<int64_t>(hbm.size()));
   allocs.emplace(a.id, a);
-  // A new PSUM tensor starts unwritten.
-  if (a.arena == Arena::psum)
-    unwrite(a);
   if (a.input.empty())
     return;
   if (a.arena != Arena::hbm)
@@ -115,17 +136,55 @@ View Accelerator::resolve(const View &view) {
 }
 
 void Accelerator::wrote(const View &v) {
-  if (v.arena == Arena::psum)
-    mark(v, 1);
+  if (v.arena != Arena::psum)
+    return;
+  int64_t k = width(v.dtype);
+  spans(v, [&](int64_t p, int64_t e, int64_t n) {
+    std::map<int64_t, Owner> &row = written[p];
+    int64_t lo = e * k, hi = (e + n) * k;
+    cut(row, lo);
+    cut(row, hi);
+    auto first = row.lower_bound(lo), last = row.lower_bound(hi);
+    // Taking another allocation's written bytes clobbers it.
+    for (auto it = first; it != last; ++it)
+      if (it->second.alloc != v.alloc)
+        clobbered[it->second.alloc] = v.alloc;
+    row.erase(first, last);
+    row.emplace(lo, Owner{hi, v.alloc});
+  });
 }
 
 std::vector<bool> Accelerator::started(const View &v) const {
   std::vector<bool> out;
+  out.reserve(v.count());
   int64_t k = width(v.dtype);
-  v.each([&](int64_t p, int64_t e) {
-    auto first = written.begin() + p * kPsumRow + e * k;
-    out.push_back(v.arena == Arena::psum &&
-                  std::all_of(first, first + k, [](uint8_t b) { return b != 0; }));
+  spans(v, [&](int64_t p, int64_t e, int64_t n) {
+    const std::map<int64_t, Owner> &row = written[p];
+    int64_t x = e * k, hi = (e + n) * k;
+    auto it = row.upper_bound(x);
+    if (it != row.begin())
+      --it;
+    while (x < hi) {
+      // The next span of the allocation's bytes past x.
+      while (it != row.end() && (it->second.end <= x || it->second.alloc != v.alloc))
+        ++it;
+      // Elements before its first byte hold another's byte.
+      int64_t from = it == row.end() ? hi : std::min(std::max(it->first, x), hi);
+      int64_t before = (from - x + k - 1) / k;
+      out.insert(out.end(), before, false);
+      x += before * k;
+      if (x >= hi || x >= it->second.end)
+        continue;
+      // Adjacent spans of the allocation extend this one to end.
+      int64_t end = it->second.end;
+      for (auto next = std::next(it);
+           next != row.end() && next->first == end && next->second.alloc == v.alloc; ++next)
+        end = next->second.end;
+      int64_t inside = (std::min(end, hi) - x) / k;
+      // An element across that end is not started.
+      out.insert(out.end(), std::max<int64_t>(inside, 1), inside > 0);
+      x += std::max<int64_t>(inside, 1) * k;
+    }
   });
   return out;
 }
@@ -133,23 +192,24 @@ std::vector<bool> Accelerator::started(const View &v) const {
 void Accelerator::restart(const View &v) {
   if (v.arena != Arena::psum)
     return;
-  // The newest allocation holding it, past any dead ones.
-  if (const Alloc *a = holder(allocs, v)) {
-    unwrite(*a);
-    return;
+  // Another allocation's bytes keep their writer.
+  const Alloc &a = allocs.at(v.alloc);
+  for (int64_t p = a.partition; p < a.partition + a.partitions(); ++p) {
+    std::map<int64_t, Owner> &row = written[p];
+    int64_t lo = a.byte, hi = a.byte + a.rowBytes();
+    cut(row, lo);
+    cut(row, hi);
+    for (auto it = row.lower_bound(lo); it != row.end() && it->first < hi;)
+      it = it->second.alloc == v.alloc ? row.erase(it) : std::next(it);
   }
-  mark(v, 0);
+  clobbered.erase(v.alloc);
 }
 
-void Accelerator::mark(const View &v, uint8_t value) {
-  int64_t k = width(v.dtype);
-  v.each(
-      [&](int64_t p, int64_t e) { std::fill_n(written.begin() + p * kPsumRow + e * k, k, value); });
-}
-
-void Accelerator::unwrite(const Alloc &a) {
-  for (int64_t p = a.partition; p < a.partition + a.partitions(); ++p)
-    std::fill_n(written.begin() + p * kPsumRow + a.byte, a.rowBytes(), 0);
+void Accelerator::unclobbered(const View &v) const {
+  auto it = clobbered.find(v.alloc);
+  if (it != clobbered.end())
+    fail("psum allocation %" + std::to_string(v.alloc) + " accumulates after allocation %" +
+         std::to_string(it->second) + " overwrote its bytes; aliased accumulation is refused");
 }
 
 void Accelerator::store(const Output &o, const std::string &dir) const {
