@@ -30,6 +30,14 @@ struct Batching {
     return ranked.clone(shape);
   }
 
+  // Gives op's results the batch dimension.
+  void addBatchDim(mlir::Operation *op) {
+    for (mlir::Value result : op->getResults()) {
+      result.setType(addBatchDim(result.getType()));
+      batched.insert(result);
+    }
+  }
+
   bool isBatched(mlir::Value value) const {
     return batched.contains(value);
   }
@@ -66,6 +74,32 @@ struct Batching {
 // A rule batches one op in place; a failure refuses it.
 using Rule = mlir::LogicalResult (*)(Batching &, mlir::Operation *);
 
+// Elementwise: a batched operand batches every operand and result.
+mlir::LogicalResult elementwise(Batching &batching, mlir::Operation *op) {
+  if (llvm::none_of(op->getOperands(), [&](mlir::Value v) { return batching.isBatched(v); }))
+    return mlir::success();
+  auto type = mlir::cast<mlir::RankedTensorType>(op->getResult(0).getType());
+  for (unsigned i = 0; i < op->getNumOperands(); ++i) {
+    mlir::Value operand = op->getOperand(i);
+    int64_t rank = mlir::cast<mlir::RankedTensorType>(operand.getType()).getRank();
+    if (rank - batching.isBatched(operand) == type.getRank()) {
+      batching.batchOperand(op, i);
+      continue;
+    }
+    // A scalar beside tensors, e.g. select's pred: unbatched stays scalar.
+    if (!batching.isBatched(operand))
+      continue;
+    // A batched scalar spreads over the result's shape.
+    auto element = mlir::cast<mlir::RankedTensorType>(operand.getType()).getElementType();
+    batching.builder.setInsertionPoint(op);
+    op->setOperand(i, hlo::BroadcastInDimOp::create(batching.builder, op->getLoc(),
+                                                    batching.addBatchDim(type.clone(element)),
+                                                    operand, llvm::ArrayRef<int64_t>{0}));
+  }
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // A constant stays unbatched.
 mlir::LogicalResult constant(Batching &, mlir::Operation *) {
   return mlir::success();
@@ -80,12 +114,23 @@ mlir::LogicalResult ret(Batching &batching, mlir::Operation *op) {
 
 // The rules by op name.
 const std::pair<llvm::StringLiteral, Rule> kRules[] = {
+    {hlo::SelectOp::getOperationName(), elementwise},
     {hlo::ConstantOp::getOperationName(), constant},
     {mlir::func::ReturnOp::getOperationName(), ret},
 };
 
+// Whether every type is a ranked tensor.
+bool ranked(mlir::TypeRange types) {
+  return llvm::all_of(types,
+                      [](mlir::Type type) { return mlir::isa<mlir::RankedTensorType>(type); });
+}
+
 // The op's rule, or null.
 Rule rule(mlir::Operation *op) {
+  if (op->hasTrait<mlir::OpTrait::Elementwise>() &&
+      mlir::isa<hlo::StablehloDialect>(op->getDialect()) && ranked(op->getOperandTypes()) &&
+      ranked(op->getResultTypes()))
+    return elementwise;
   for (const auto &[name, rule] : kRules)
     if (op->getName().getStringRef() == name)
       return rule;
