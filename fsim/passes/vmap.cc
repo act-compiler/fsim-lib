@@ -224,6 +224,26 @@ mlir::LogicalResult gather(Batching &batching, mlir::Operation *op) {
   return mlir::success();
 }
 
+// The batch dimension scatters whole as update window 0; batched indices are refused.
+mlir::LogicalResult scatter(Batching &batching, mlir::Operation *op) {
+  auto scatter = mlir::cast<hlo::ScatterOp>(op);
+  if (batching.isBatched(scatter.getScatterIndices()))
+    return mlir::emitError(op->getLoc()) << "no vmap rule for batched indices of " << op->getName();
+  // The inputs and updates are batched; the indices and the update computation stay.
+  unsigned indices = scatter.getInputs().size();
+  for (unsigned i = 0; i < op->getNumOperands(); ++i)
+    if (i != indices)
+      batching.batchOperand(op, i);
+  hlo::ScatterDimensionNumbersAttr numbers = scatter.getScatterDimensionNumbers();
+  scatter.setScatterDimensionNumbersAttr(hlo::ScatterDimensionNumbersAttr::get(
+      op->getContext(), leading(0, shifted(numbers.getUpdateWindowDims())),
+      shifted(numbers.getInsertedWindowDims()), shifted(numbers.getInputBatchingDims()),
+      numbers.getScatterIndicesBatchingDims(), shifted(numbers.getScatterDimsToOperandDims()),
+      numbers.getIndexVectorDim()));
+  batching.addBatchDim(op);
+  return mlir::success();
+}
+
 // The reduced dimensions shift; the scalar inits and the body stay.
 mlir::LogicalResult reduce(Batching &batching, mlir::Operation *op) {
   auto reduce = mlir::cast<hlo::ReduceOp>(op);
@@ -265,6 +285,7 @@ const std::pair<llvm::StringLiteral, Rule> kRules[] = {
     {hlo::BitcastConvertOp::getOperationName(), reshape},
     {hlo::DotGeneralOp::getOperationName(), dotGeneral},
     {hlo::GatherOp::getOperationName(), gather},
+    {hlo::ScatterOp::getOperationName(), scatter},
     {hlo::ReduceOp::getOperationName(), reduce},
     {hlo::OptimizationBarrierOp::getOperationName(), barrier},
     {mlir::func::ReturnOp::getOperationName(), ret},
