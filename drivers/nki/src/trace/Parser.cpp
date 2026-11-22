@@ -387,6 +387,13 @@ Affine Fields::affine(const std::string &name) {
   return std::get<Affine>(std::move(v));
 }
 
+List Fields::list(const std::string &name) {
+  Value v = take(name);
+  if (!std::holds_alternative<List>(v))
+    fail(name, "is not a list");
+  return std::get<List>(std::move(v));
+}
+
 bool Fields::flag(const std::string &name) {
   Value v = take(name);
   if (!std::holds_alternative<bool>(v))

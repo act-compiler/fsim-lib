@@ -12,6 +12,7 @@ add_executable(fsim-nki
   src/isa/Activation.cpp
   src/isa/AffineSelect.cpp
   src/isa/DmaCopy.cpp
+  src/isa/DmaTranspose.cpp
   src/isa/Instruction.cpp
   src/isa/Memset.cpp
   src/isa/NcMatmul.cpp

@@ -41,6 +41,7 @@ public:
   std::optional<View> optView(const std::string &name);
   Number number(const std::string &name);
   Affine affine(const std::string &name);
+  List list(const std::string &name);
   bool flag(const std::string &name);
   std::optional<bool> optFlag(const std::string &name);
   std::string word(const std::string &name);

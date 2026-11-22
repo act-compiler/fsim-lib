@@ -33,6 +33,7 @@ InstructionPtr decodeTensorTensorArith(Fields &fields);
 InstructionPtr decodeTensorReduceArith(Fields &fields);
 InstructionPtr decodeNcMatmul(Fields &fields);
 InstructionPtr decodeAffineSelect(Fields &fields);
+InstructionPtr decodeDmaTranspose(Fields &fields);
 InstructionPtr decodeTensorCopy(Fields &fields);
 InstructionPtr decodeTensorScalarArith(Fields &fields);
 
