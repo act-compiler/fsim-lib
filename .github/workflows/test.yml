@@ -67,7 +67,7 @@ jobs:
           --bench xfail
           --bench matmul
 
-      - name: Run the nki suite at 4 samples, except the case with a run-time offset
+      - name: Run the nki suite at 4 samples
         env:
           FSIM_WALL_TIMEOUT: 300
         run: >-
@@ -83,6 +83,7 @@ jobs:
           --bench nkilib/qkv_cte/llama3_8b_tp4_seq512
           --bench nkilib/cumsum
           --bench nkilib/attention_tkg/llama3_8b_tp4_batch1_kv512
+          --bench nkilib/moe_tkg/selective
           --bench nkilib/attention_cte/llama3_8b_tp4_seq512
           --bench xfail
           --bench matmul

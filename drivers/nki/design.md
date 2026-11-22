@@ -45,7 +45,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 
 - A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace, holding stdin's text in memory; the runner always passes the file.
-- Its batch loop, in `src/samples/`, reads the trace in full each time it traces.
+- `Driver::trace` first scans the trace's text for a `+s(...)` offset, then reads the trace in full.
 - `<inputs>/<name>.bin` holds its input's tensor from each of the case's `M` input sets, back to back.
 - `--sampling S` draws each simulated sample's input set:
   - `random`, the default: a uniform draw with replacement over the `M` input sets, from a fixed-seed `std::mt19937_64`, the same on every run with one C++ standard library
@@ -55,8 +55,6 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
 - Each later batch loads its samples and replays the first's executables.
 - Extra samples pad the last batch to `B`, and every one is simulated and checked.
-- Above one sample, a parse-only reading first looks for a `+s(...)` run-time offset.
-  Such a trace runs at a batch size of 1: each sample traces alone, and the pipeline begins its next trace for it.
 - `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32, under either `--sampling` value.
 - `fsim-nki` refuses before the first output byte when the outputs pass half the free space of `--outputs`, or 1 GiB.
 - `--trigger`, `--overlap` and `--num-samples` are the library's knobs, and `--sampling` the driver's.
@@ -71,7 +69,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 - [fsim/README.md](../../fsim/README.md) defines its fields.
 - The run's clock starts after the state's upload, at the first instruction, and leaves out the header, the allocations and every input load and output store.
 - The trace ends at `end`, with `trace` the instructions run.
-- The line prints at each trace's `end`, so a run killed in a sync keeps it, and again after every sample's outputs are written.
+- The line prints at `end`, so a run killed in a sync keeps it, and again after every sample's outputs are written.
 - `bench.sh run` reads the last line into its status line.
 
 `--validate` checks a trace without simulating it:
@@ -254,28 +252,28 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 4. `src/Driver.{h,cpp}`
 5. `src/samples/` and `src/main.cpp`
 
-| path                                  | role                                                                                                                        |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement                |
-| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                        |
-| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                           |
-| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                              |
-| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken                  |
-| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                                  |
-| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                                 |
-| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`                   |
-| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                            |
-| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                          |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith`   |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas, registers and `oob`, the allocation table, the PSUM written mask      |
-| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                  |
-| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text          |
-| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, a parse-only reading for `+s(...)` offsets, `resolve`, soft trigger |
-| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over a run's batches, replay, and a batch size of 1 for a trace with a `+s(...)` offset               |
-| `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                       |
-| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                     |
-| `src/main.cpp`                        | the `fsim-nki` command line                                                                                                 |
-| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                                |
+| path                                  | role                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement              |
+| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                      |
+| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                         |
+| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                            |
+| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken                |
+| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                                |
+| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                               |
+| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`                 |
+| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                          |
+| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                        |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith` |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas, registers and `oob`, the allocation table, the PSUM written mask    |
+| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                |
+| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text        |
+| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                           |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over a run's batches, and replay                                                                    |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                     |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                   |
+| `src/main.cpp`                        | the `fsim-nki` command line                                                                                               |
+| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                              |
 
 ## From a record to StableHLO
 

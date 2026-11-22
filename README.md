@@ -24,7 +24,7 @@ Under review at a major systems conference.
   - the vmap pass over each module in `fsim/passes/test/` at `--batch-size 2`
   - the build of the NKI driver
   - the gen and the run of the nki cases the workflow lists
-  - the same run at `--num-samples 4`, except the case with a `+s()` run-time offset, which `drivers/nki/design.md` defines
+  - the same run at `--num-samples 4`
 
 ## Running it
 
@@ -113,7 +113,6 @@ A sample is one simulation of the trace on one input set.
 - `--overlap T`: the compile threads, 4 by default, for the `overlap` variant only.
 - `--num-samples N`: the samples per run, 1 by default.
   The count rounds up to whole batches, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
-  It is exactly `N` for a case with a run-time offset.
 - `--sampling S`: each sample's input set, by default `random`, a uniform draw with replacement from a fixed seed, or `modulo`, where sample `k`, counting from 0, takes input set `k mod M` of the case's `M` input sets.
 - `--bench PATH`: the cases, picked as gen picks them; it repeats, and without one, run takes every case.
 - `FSIM_WALL_TIMEOUT`: each case's wall seconds, 60 by default.

@@ -32,8 +32,6 @@ public:
 
   // Records an allocation.
   void allocate(const Alloc &alloc);
-  // Forgets the allocations, the written mask and clobbers.
-  void reset();
   // Zeroes batchIndex's part of each host copy.
   void zero(uint32_t batchIndex);
   // The view checked; a run-time offset gets its in-allocation range.
