@@ -73,6 +73,9 @@ void Accelerator::allocate(const Alloc &a, const std::string &inputs) {
 
 void Accelerator::check(const View &v) const {
   std::string where = v.address();
+  auto it = allocs.find(v.alloc);
+  if (it == allocs.end() || it->second.arena != v.arena)
+    fail("view " + where + " names no " + name(v.arena) + " allocation");
   int64_t k = width(v.dtype);
   for (const Entry &e : v.pattern)
     if (e.count <= 0)
@@ -86,6 +89,14 @@ void Accelerator::check(const View &v) const {
   auto [lo, hi] = span(v.byte / k, v.free());
   if (lo < 0 || hi >= rowBytes(v.arena) / k)
     fail("view " + where + " crosses its arena's partition row");
+  // The view stays inside its allocation.
+  const Alloc &a = it->second;
+  if (plo < a.partition || phi >= a.partition + a.partitions())
+    fail("view " + where + " leaves allocation %" + std::to_string(a.id) + "'s partitions " +
+         std::to_string(a.partition) + " to " + std::to_string(a.partition + a.partitions() - 1));
+  if (lo * k < a.byte || hi * k + k > a.byte + a.rowBytes())
+    fail("view " + where + " leaves allocation %" + std::to_string(a.id) + "'s bytes " +
+         std::to_string(a.byte) + " to " + std::to_string(a.byte + a.rowBytes() - 1));
 }
 
 View Accelerator::resolve(const View &view) {

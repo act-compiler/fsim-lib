@@ -77,8 +77,10 @@ void checkMatmul(const std::map<int64_t, Alloc> &allocs, const View &dst, const 
   int64_t k = width(dst.dtype);
   auto [lo, hi] = span(dst.byte / k, dst.free());
   int64_t first = lo * k, last = hi * k + k - 1;
-  const Alloc *a = holder(allocs, dst);
-  std::string in = a ? " in " + named(*a) : "";
+  auto a = allocs.find(dst.alloc);
+  if (a == allocs.end())
+    fail("view " + dst.address() + " names no psum allocation");
+  std::string in = " in " + named(a->second);
   if (first / kPsumBank != last / kPsumBank)
     fail("nc_matmul dst " + dst.address() + in + " spans bytes " + str(first) + " to " + str(last) +
          ", across a " + str(kPsumBank) + "-byte PSUM bank boundary at " +

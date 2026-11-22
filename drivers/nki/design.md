@@ -80,7 +80,7 @@ instr    := kind (field "=" value)*
 control  := "reg.load" reg view | "reg.set" reg int | "loop" reg int int int | "endloop"
 output   := "output" name id
 value    := view | number | "true" | "false" | "none" | word | "[" (number ("," number)*)? "]" | affine
-view     := arena "@" addr ":" dtype pattern dyn?
+view     := arena id "@" addr ":" dtype pattern dyn?
 pattern  := "[" "[" stride "," count "]" ("," "[" stride "," count "]")* "]"
 dyn      := "+s(" view ")*" int | "+r" int "*" int
 affine   := "aff(" pattern "," int ")"
@@ -91,9 +91,9 @@ reg      := "r" int
 
 ### Header
 
-`nki-trace 1 target=trn2 lnc=1 hbm=<bytes>` is the first line.
+`nki-trace 2 target=trn2 lnc=1 hbm=<bytes>` is the first line.
 
-- `1` is the format version; the parser refuses any other.
+- `2` is the format version; the parser refuses any other, version 1 included, and names the version it read.
 - `hbm=` is the HBM arena's capacity, which the recorder sets before the kernel runs.
 - The capacity is the kernel's highest HBM byte plus the inputs, the outputs and a scratch reserve.
 - The reserve is the inputs' and outputs' size, or the `reserve` bytes `record(build, out, reserve)` takes.
@@ -127,9 +127,10 @@ The recorder places a tensor without an address:
 
 ### Views
 
-A view is one operand: `sbuf@0,64:bf16[[1,128],[0,1],[1,32]]`.
+A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 
-- `arena@addr` is the first byte, as in the allocation; `dtype` is the operand's dtype, a bitcast of the arena's bytes.
+- `%3` is the allocation the view is over; `fsim-nki` refuses an id no allocation of that arena declared.
+- `arena` and `@addr` give the first byte, as in the allocation; `dtype` is the operand's dtype, a bitcast of the arena's bytes.
 - The pattern is `[[stride, count], ...]`, outer dimension first.
 - For `sbuf` and `psum` the first entry is the partition dimension, its stride in partitions, 0 for a broadcast.
 - Every other entry's stride is in elements of `dtype` within the partition, or within HBM, 0 for a broadcast.
@@ -181,18 +182,22 @@ Four records are reserved in the format, so a rolled loop or a register loop is 
 The records of `rmsnorm_tkg/llama3_8b_tp4`, abridged, as the recorder emits them:
 
 ```
-nki-trace 1 target=trn2 lnc=1 hbm=49152
+nki-trace 2 target=trn2 lnc=1 hbm=49152
 alloc %0 hbm@0 bf16[1,1,4096] driver input=input
 alloc %1 hbm@8192 bf16[1,4096] driver input=gamma
 alloc %2 hbm@16384 bf16[128,1,32] driver name=out
 alloc %3 sbuf@0,0 bf16[128,1,32] driver
-dma_copy dst=sbuf@0,0:bf16[[1,128],[32,1],[32,1],[1,32]] src=hbm@0:bf16[[32,128],[4096,1],[4096,1],[1,32]] oob_is_err=true engine=dma
+dma_copy dst=sbuf%3@0,0:bf16[[1,128],[32,1],[32,1],[1,32]] src=hbm%0@0:bf16[[32,128],[4096,1],[4096,1],[1,32]] oob_is_err=true engine=dma
 alloc %5 sbuf@0,128 f32[128,1] driver
-memset dst=sbuf@0,128:f32[[1,128],[1,1]] value=1e-06 engine=unknown
+memset dst=sbuf%5@0,128:f32[[1,128],[1,1]] value=1e-06 engine=unknown
+alloc %6 sbuf@0,132 f32[128,128] driver
+memset dst=sbuf%6@0,132:f32[[1,128],[1,128]] value=1.0 engine=unknown
 alloc %7 sbuf@0,644 f32[128,1,32] driver
-activation dst=sbuf@0,644:f32[[1,128],[32,1],[1,32]] op=square data=sbuf@0,0:bf16[[1,128],[32,1],[1,32]] bias=0.0 scale=1.0 reduce_op=none reduce_res=none reduce_cmd=idle
-tensor_reduce_arith dst=sbuf@0,772:f32[[1,128],[1,1]] op=add data=sbuf@0,644:f32[[1,128],[32,1],[1,32]] num_r_dim=1 negate=false keepdims=false
-nc_matmul dst=psum@0,0:f32[[1,128],[1,1]] stationary=sbuf@0,132:f32[[1,128],[1,128]] moving=sbuf@0,772:f32[[1,128],[1,1]] is_transpose=false row_pos=none col_pos=none perf_mode=none accumulate=none
+activation dst=sbuf%7@0,644:f32[[1,128],[32,1],[1,32]] op=square data=sbuf%3@0,0:bf16[[1,128],[32,1],[1,32]] bias=0.0 scale=1.0 reduce_op=none reduce_res=none reduce_cmd=idle
+alloc %8 sbuf@0,772 f32[128,1] driver
+tensor_reduce_arith dst=sbuf%8@0,772:f32[[1,128],[1,1]] op=add data=sbuf%7@0,644:f32[[1,128],[32,1],[1,32]] num_r_dim=1 negate=false keepdims=false
+alloc %10 psum@0,0 f32[128,1] driver
+nc_matmul dst=psum%10@0,0:f32[[1,128],[1,1]] stationary=sbuf%6@0,132:f32[[1,128],[1,128]] moving=sbuf%8@0,772:f32[[1,128],[1,1]] is_transpose=false row_pos=none col_pos=none perf_mode=none accumulate=none
 output out %2
 end
 ```
@@ -272,7 +277,7 @@ Control and state:
 - Under `overlap`, submitted modules compile on the library's threads while the driver keeps decoding.
 - `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
 - It submits the module, syncs, and reads the index from the arena's host copy, so the offset enters the module as a constant address.
-- `Accelerator::resolve` then checks every view against its arena and its dtype's alignment.
+- `Accelerator::resolve` then checks every view against its allocation, its arena and its dtype's alignment.
 - `nc_matmul` resolves `accumulate` at trace time from a per-byte PSUM written mask in `Accelerator`:
   - A PSUM allocation, kernel-placed or driver-placed, clears the mask over its bytes.
   - Any write to PSUM, by a matmul or not, sets its bytes.

@@ -60,6 +60,13 @@ public:
     rest_.remove_prefix(digits);
     return value;
   }
+  // An allocation id: a non-negative integer.
+  int64_t id() {
+    int64_t n = integer();
+    if (n < 0)
+      fail("allocation id %" + std::to_string(n) + " is negative");
+    return n;
+  }
   // The text up to any of the stop characters.
   std::string_view until(std::string_view stops) {
     size_t n = rest_.find_first_of(stops);
@@ -128,10 +135,12 @@ std::vector<Entry> pattern(Cursor &c) {
   return entries;
 }
 
-// view := arena "@" addr ":" dtype pattern dyn?
+// view := arena "%" int "@" addr ":" dtype pattern dyn?
 View view(Cursor &c) {
   View v;
   v.arena = arena(c);
+  c.expect("%");
+  v.alloc = c.id();
   c.expect("@");
   address(c, v.arena, v.partition, v.byte);
   c.expect(":");
@@ -151,7 +160,7 @@ View view(Cursor &c) {
 }
 
 bool isView(std::string_view text) {
-  for (std::string_view a : {"hbm@", "sbuf@", "psum@", "private_hbm@", "shared_hbm@"})
+  for (std::string_view a : {"hbm%", "sbuf%", "psum%", "private_hbm%", "shared_hbm%"})
     if (text.starts_with(a))
       return true;
   return false;
@@ -224,7 +233,7 @@ Value value(const std::string &text) {
 int64_t id(const std::string &text) {
   Cursor c(text);
   c.expect("%");
-  int64_t n = c.integer();
+  int64_t n = c.id();
   c.end();
   return n;
 }
@@ -291,8 +300,8 @@ Header parseHeader(const std::string &line) {
     fail("the first line is not a trace header: '" + line + "'");
   Header h;
   h.version = integer(t[1]);
-  if (h.version != 1)
-    fail("trace format version " + t[1] + "; this build reads version 1");
+  if (h.version != 2)
+    fail("trace format version " + t[1] + "; this build reads version 2, so regenerate the trace");
   if (t[2] != "target=trn2" || t[3] != "lnc=1")
     fail("the target is '" + t[2] + " " + t[3] + "'; this build simulates target=trn2 lnc=1");
   if (!t[4].starts_with("hbm="))

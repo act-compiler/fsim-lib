@@ -46,7 +46,7 @@ public:
   std::vector<uint8_t> written; // per PSUM byte: written since allocated
 
 private:
-  // Refuses a view off its arena or dtype grid.
+  // Refuses a view off its allocation, arena or dtype grid.
   void check(const View &view) const;
   // Sets the mask over a view's bytes.
   void mark(const View &view, uint8_t value);

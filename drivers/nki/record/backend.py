@@ -279,7 +279,7 @@ class Recorder:
         ti_index=None,
         ti_num_elem=None,
     ):
-        # The view over its allocation's row, as arena@addr:dtype[pattern]dyn.
+        # The view over its allocation's row, as arena%id@addr:dtype[pattern]dyn.
         if vector_offset is not None or ti_index is not None:
             raise NotImplementedError('vector offsets are not recorded')
         dt = dtype(tensor_dtype)
@@ -308,7 +308,7 @@ class Recorder:
             p, e = divmod(offset, row)
             addr = f'{tensor.partition + p},{tensor.byte + e * size}'
             pat[0][0] //= row
-        return View(f'{tensor.arena}@{addr}:{dt}{pattern_text(pat)}{dyn}')
+        return View(f'{tensor.arena}%{tensor.id}@{addr}:{dt}{pattern_text(pat)}{dyn}')
 
     def build_affine_value_map(self, pattern, static_offset=0, dynamic_offset=None):
         # A register offset must be a known int.
