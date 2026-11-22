@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "mlir/Pass/Pass.h"
@@ -18,5 +19,7 @@ std::unique_ptr<mlir::Pass> createForwardSlicesPass();
 std::unique_ptr<mlir::Pass> createDeadUpdatesPass();
 // Orders reads of a buffer before its in-place update.
 std::unique_ptr<mlir::Pass> createOrderReadsPass();
+// Vmaps @main at batch_size, refusing an op without a rule.
+std::unique_ptr<mlir::Pass> createVmapPass(int64_t batch_size);
 
 } // namespace fsim

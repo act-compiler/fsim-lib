@@ -129,9 +129,11 @@ A failed phase fails the module's compile with the phase's diagnostics.
 
 - `--trace` prints each pass's ms and the op count after it.
 - `--histogram` prints the final op count per op name.
+- `--batch-size B` runs the vmap pass at batch size `B`.
+- `passes/test/` holds one small module per group of vmap rules; CI runs each at `--batch-size 2`.
 
 ```bash
-./docker/exec.sh "fsim/build/fsim-passes <in.mlir> -o <out.bc> [--text] [--trace] [--histogram]"
+./docker/exec.sh "fsim/build/fsim-passes <in.mlir> -o <out.bc> [--text] [--trace] [--histogram] [--batch-size B]"
 ```
 
 `setup.sh` takes names as arguments, each one part to set up:

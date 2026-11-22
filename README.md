@@ -19,7 +19,11 @@ Under review at a major systems conference.
   - `bench.sh`: the generation of one ISA's benchmark cases and their runs on one build of its driver
 - `format/`: the formatter and its per-language configs.
 - `docs/`: reports; `docs/nki-simulate.md` compares `nki.simulate` with runs on a trn2 chip.
-- `.github/workflows/`: the CI, which builds both targets, then generates and runs the nki suite.
+- `.github/workflows/`: the CI, which runs in order:
+  - the build of the library
+  - the vmap pass over each module in `fsim/passes/test/` at `--batch-size 2`
+  - the build of the NKI driver
+  - the gen and the run of the nki cases the workflow lists
 
 ## Running it
 

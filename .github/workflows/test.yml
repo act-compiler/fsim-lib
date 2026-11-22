@@ -21,6 +21,9 @@ jobs:
       - name: Build the library
         run: ./scripts/build.sh fsim
 
+      - name: Run the vmap pass over its test modules at batch size 2
+        run: ./docker/exec.sh 'for m in fsim/passes/test/*.mlir; do fsim/build/fsim-passes "$m" --batch-size 2 || exit 1; done'
+
       - name: Build the NKI driver
         run: ./scripts/build.sh nki
 
