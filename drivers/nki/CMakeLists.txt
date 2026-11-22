@@ -17,6 +17,7 @@ add_executable(fsim-nki
   src/isa/Memset.cpp
   src/isa/NcMatmul.cpp
   src/isa/Reciprocal.cpp
+  src/isa/SelectReduce.cpp
   src/isa/Shared.cpp
   src/isa/TensorCopy.cpp
   src/isa/TensorReduce.cpp
