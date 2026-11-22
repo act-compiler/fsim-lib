@@ -92,6 +92,10 @@ struct View {
   std::vector<int64_t> shape() const;
   // Elements in the operand.
   int64_t count() const;
+  // Elements per partition.
+  int64_t perPartition() const {
+    return count() / partitions().count;
+  }
   // Calls f(partition, element) per element, row-major order.
   template <class F> void each(F f) const;
 };

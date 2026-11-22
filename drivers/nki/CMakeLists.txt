@@ -16,6 +16,7 @@ add_executable(fsim-nki
   src/isa/Instruction.cpp
   src/isa/Memset.cpp
   src/isa/NcMatmul.cpp
+  src/isa/NcStreamShuffle.cpp
   src/isa/Reciprocal.cpp
   src/isa/SelectReduce.cpp
   src/isa/Shared.cpp

@@ -364,6 +364,8 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - For multiply then add, it composes the maps `r -> data0[i] * r + data1[i]` in a Hillis-Steele scan, so its sums run in a tree order, not nki.simulate's loop order.
 - The scan forms prefix products of `data0` before `initial` enters, so a product past f32's range gives a result the loop does not.
 - `select_reduce` takes `on_true` where `predicate` is nonzero and `on_false` elsewhere, in f32, and casts to `dst`'s dtype ([nki.isa.select_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.select_reduce.html)).
+- `nc_stream_shuffle` gives each `dst` partition `p` the `src` partition `32 * (p / 32) + shuffle_mask[p % 32]`, the quadrant rule of [nki.isa.nc_stream_shuffle](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_stream_shuffle.html).
+- It copies bits, as `tensor_copy` does, departing from nki.simulate's f32 convert, which would round a u32 above 2^24.
 
 ## Coverage
 
@@ -385,6 +387,7 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `dma_transpose`       | attention_cte                                           |
 | `reciprocal`          | attention                                               |
 | `select_reduce`       | attention_tkg                                           |
+| `nc_stream_shuffle`   | attention_tkg, moe                                      |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
@@ -415,6 +418,8 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `select_reduce` `predicate`                | a u8 or u16 view, others refused, nonzero true; the suite reaches sbuf u8            |
 | `select_reduce` `on_false`                 | any number, as f32, a view refused; the suite reaches -inf                           |
 | `select_reduce` `reduce_cmd`, `reduce_op`  | idle with maximum, `reduce_res` none and `reverse_pred` false                        |
+| `nc_stream_shuffle` `shuffle_mask`         | 32 equal entries below 32; the suite reaches all 0                                   |
+| `nc_stream_shuffle` `src`, `dst`           | one dtype, per partition alike, at lowering; the suite reaches f32, bf16, u32        |
 
 ## Scope and limits
 
