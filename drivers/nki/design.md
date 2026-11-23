@@ -226,8 +226,8 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                             |
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
-| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after the public nki.isa instruction       |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `applyOperand`                                                    |
+| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                      |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`                                      |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
@@ -363,6 +363,12 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - `tensor_tensor_scan` computes `r[i] = op1(op0(data0[i], r[i-1]), data1[i])` along the free dim per partition, from `initial`, in f32 ([nki.isa.tensor_tensor_scan](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_tensor_scan.html)).
 - For multiply then add, it composes the maps `r -> data0[i] * r + data1[i]` in a Hillis-Steele scan, so its sums run in a tree order, not nki.simulate's loop order.
 - The scan forms prefix products of `data0` before `initial` enters, so a product past f32's range gives a result the loop does not.
+- `select_reduce` takes `on_true` where `predicate` is nonzero and `on_false` elsewhere, in f32, and casts to `dst`'s dtype ([nki.isa.select_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.select_reduce.html)).
+- `nc_stream_shuffle` gives each `dst` partition `p` the `src` partition `32 * (p / 32) + shuffle_mask[p % 32]`, the quadrant rule of [nki.isa.nc_stream_shuffle](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_stream_shuffle.html).
+- It copies bits, as `tensor_copy` does, departing from nki.simulate's f32 convert, which would round a u32 above 2^24.
+- `stream_transpose` is the record kind of [nki.isa.nc_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_transpose.html) on the Vector Engine.
+- It writes `data` as `[P, free]` transposed to `dst` in flat order, as nki.simulate does.
+- It refuses a `data` past 32x32, the Vector Engine bound of nki.isa.nc_transpose.
 
 ## Coverage
 
@@ -383,6 +389,9 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `affine_select`       | qkv_cte, mlp, attention, moe                            |
 | `dma_transpose`       | attention_cte                                           |
 | `reciprocal`          | attention                                               |
+| `select_reduce`       | attention_tkg                                           |
+| `nc_stream_shuffle`   | attention_tkg, moe                                      |
+| `stream_transpose`    | attention_tkg, moe selective                            |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
@@ -410,6 +419,13 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `reciprocal` `data` to `dst` dtype         | any pair, through f32; the suite reaches f32 to f32                                  |
 | `tensor_tensor_scan` `op0`, `op1`          | multiply then add, with `reverse0` and `reverse1` false                              |
 | `tensor_tensor_scan` `initial`             | a view, a scalar refused; the suite reaches an sbuf f32 `[128, 1]`                   |
+| `select_reduce` `predicate`                | a u8 or u16 view, others refused, nonzero true; the suite reaches sbuf u8            |
+| `select_reduce` `on_false`                 | any number, as f32, a view refused; the suite reaches -inf                           |
+| `select_reduce` `reduce_cmd`, `reduce_op`  | idle with maximum, `reduce_res` none and `reverse_pred` false                        |
+| `nc_stream_shuffle` `shuffle_mask`         | 32 equal entries below 32; the suite reaches all 0                                   |
+| `nc_stream_shuffle` `src`, `dst`           | one dtype, per partition alike, at lowering; the suite reaches f32, bf16, u32        |
+| `stream_transpose` `engine`                | vector, as nki.simulate requires                                                     |
+| `stream_transpose` `data` to `dst` dtype   | equal at lowering; the suite reaches f32 `[32, 1]` and `[8, 1]`, u16 `[16, 16]`      |
 
 ## Scope and limits
 
