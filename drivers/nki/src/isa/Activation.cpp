@@ -27,7 +27,7 @@ Fn fn(Fields &f) {
   std::string op = f.word("op");
   auto it = fns.find(op);
   if (it == fns.end())
-    f.fail("op", "'" + op + "' is not decoded in M1");
+    f.fail("op", "'" + op + "' is not decoded");
   return it->second;
 }
 
@@ -47,7 +47,7 @@ Cmd cmd(Fields &f) {
 std::optional<std::string> reduceOp(Fields &f) {
   std::optional<std::string> op = f.optWord("reduce_op");
   if (op && *op != "add" && *op != "multiply" && *op != "maximum" && *op != "minimum")
-    f.fail("reduce_op", "'" + *op + "' is not decoded in M1");
+    f.fail("reduce_op", "'" + *op + "' is not decoded");
   return op;
 }
 

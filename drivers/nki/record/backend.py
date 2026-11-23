@@ -291,7 +291,7 @@ class Recorder:
             k = math.prod(tensor_shape[indirect_dim + 1 :])
             if isinstance(scalar_offset, View):
                 if tensor.arena != 'hbm' and indirect_dim == 0:
-                    raise NotImplementedError('a +s() offset across partitions is defined at M3')
+                    raise NotImplementedError('a +s() offset across partitions is not recorded')
                 dyn = f'+s({scalar_offset.text})*{k}'
             else:
                 offset += k * int(scalar_offset)

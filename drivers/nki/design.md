@@ -137,10 +137,10 @@ A view is one operand: `sbuf@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - The recorder rewrites a view's element offset and pattern over its allocation's row into this form.
 - It refuses a view whose partition stride is not a whole number of partitions.
 - `+s(<view>)*<k>` adds the index the inner view reads, times `k` elements, at run time.
-- `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it until M3.
-- An index view is a single `i32`; a multi-element `+s(...)` view is refused until M3.
+- `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
+- An index view is a single `i32`; a multi-element `+s(...)` view is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
-- The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension until M3.
+- The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension.
 - `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.
 
 ### Instructions
@@ -162,7 +162,7 @@ The recorder drops `name`, `priority` and `dge_mode`, which carry no semantics, 
 
 Loops stay unrolled: every Python loop runs at record time and leaves its iterations in the stream.
 Four records are reserved in the format, so a rolled loop or a register loop is an extension, not a format change.
-`fsim-nki` refuses each of them until M3:
+`fsim-nki` refuses each of them:
 
 | record                            | meaning                                                              |
 | --------------------------------- | -------------------------------------------------------------------- |
@@ -220,7 +220,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                              |
 | `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                             |
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
-| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; a later milestone's kind is refused by name                                 |
+| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after the public nki.isa instruction       |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
@@ -331,35 +331,26 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - `nc_matmul` with `accumulate=none` adds onto a PSUM tile that a `memset` or copy wrote, as nki.simulate does; the docs call this undefined on trn2.
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
-- `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip at M2.
+- `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.
 
 ## Coverage
 
 The suite's thirteen kernels reach seventeen instruction kinds at trn2, each with one keyword set, no register load and no register loop.
+Of these, `fsim-nki` decodes the ones in the table.
 
-| kind                   | milestone | kernels                                                 |
-| ---------------------- | --------- | ------------------------------------------------------- |
-| `dma_copy`             | M1        | all                                                     |
-| `memset`               | M1        | all but rope and output_proj                            |
-| `activation`           | M1        | norms, qkv, mlp, attention, moe                         |
-| `tensor_tensor_arith`  | M1        | norms, rope, qkv_tkg, mlp, attention, moe               |
-| `tensor_reduce_arith`  | M1        | norms, qkv_tkg, attention, moe all_expert               |
-| `nc_matmul`            | M1        | all but rope and cumsum                                 |
-| `tensor_copy`          | M2        | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
-| `tensor_tensor_scan`   | M2        | cumsum                                                  |
-| `tensor_scalar_arith`  | M2        | qkv_cte, attention, moe                                 |
-| `affine_select`        | M2        | qkv_cte, mlp, attention, moe                            |
-| `dma_transpose`        | M2        | attention_cte                                           |
-| `reciprocal`           | M2        | attention                                               |
-| `tensor_scalar_reduce` | M2        | attention_cte                                           |
-| `select_reduce`        | M2        | attention_tkg                                           |
-| `nc_stream_shuffle`    | M2        | attention_tkg, moe                                      |
-| `stream_transpose`     | M2        | attention_tkg, moe selective                            |
-| `local_gather`         | M3        | moe selective                                           |
+| kind                  | kernels                                   |
+| --------------------- | ----------------------------------------- |
+| `dma_copy`            | all                                       |
+| `memset`              | all but rope and output_proj              |
+| `activation`          | norms, qkv, mlp, attention, moe           |
+| `tensor_tensor_arith` | norms, rope, qkv_tkg, mlp, attention, moe |
+| `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert |
+| `nc_matmul`           | all but rope and cumsum                   |
 
-Within an M1 kind, M1 decodes these values, and any other fails at decode until its milestone:
+Any other kind fails at decode as unknown.
+Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode:
 
-| field                                      | M1 decodes                                                                   |
+| field                                      | decodes                                                                      |
 | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, relu, square, abs, reciprocal    |
 | `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum          |
@@ -367,10 +358,6 @@ Within an M1 kind, M1 decodes these values, and any other fails at decode until 
 | `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                    |
 | `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                              |
 | `nc_matmul` `perf_mode`                    | none                                                                         |
-
-- M1: rmsnorm_tkg and layernorm_tkg, 11 and 19 instructions over six kinds.
-- M2: the eleven straight-line kernels.
-- M3: moe_tkg selective, with the materialized `+s(...)` views, and all_expert.
 
 ## Scope and limits
 

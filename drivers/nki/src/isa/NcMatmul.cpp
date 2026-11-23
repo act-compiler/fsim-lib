@@ -13,11 +13,11 @@ namespace nki {
 
 namespace {
 
-// Refuses a perf_mode M1 does not decode.
+// Refuses a perf_mode other than none.
 void perfMode(Fields &f) {
   std::optional<std::string> mode = f.optWord("perf_mode");
   if (mode && *mode != "none")
-    f.fail("perf_mode", "'" + *mode + "' is not decoded in M1");
+    f.fail("perf_mode", "'" + *mode + "' is not decoded");
 }
 
 class NcMatmul final : public Instruction {

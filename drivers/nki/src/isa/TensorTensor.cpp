@@ -16,9 +16,9 @@ std::string op(Fields &f, bool native) {
                                                 "minimum"};
   std::string name = f.word("op");
   if (!ops.count(name))
-    f.fail("op", "'" + name + "' is not decoded in M1");
+    f.fail("op", "'" + name + "' is not decoded");
   if (native && !integer.count(name))
-    f.fail("op", "'" + name + "' on integers on gpsimd is not decoded in M1");
+    f.fail("op", "'" + name + "' on integers on gpsimd is not decoded");
   return name;
 }
 

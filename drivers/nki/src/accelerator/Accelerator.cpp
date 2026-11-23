@@ -93,7 +93,7 @@ View Accelerator::resolve(const View &view) {
   if (v.dyn) {
     View inner = resolve(*v.dyn->view);
     if (inner.dtype != Dtype::i32 || inner.count() != 1)
-      fail("a +s() offset reads one i32; a vector offset is milestone M3");
+      fail("a +s() offset reads one i32; a vector offset is not decoded");
     int32_t offset;
     std::memcpy(&offset, at(inner.arena, inner.partition, inner.byte), sizeof offset);
     v.byte += offset * v.dyn->scale * width(v.dtype);

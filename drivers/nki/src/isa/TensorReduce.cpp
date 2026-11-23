@@ -12,7 +12,7 @@ namespace {
 std::string op(Fields &f) {
   std::string name = f.word("op");
   if (name != "add" && name != "multiply" && name != "maximum" && name != "minimum")
-    f.fail("op", "'" + name + "' is not decoded in M1");
+    f.fail("op", "'" + name + "' is not decoded");
   return name;
 }
 

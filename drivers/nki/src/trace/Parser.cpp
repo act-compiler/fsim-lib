@@ -145,7 +145,7 @@ View view(Cursor &c) {
     d.scale = c.integer();
     v.dyn = std::move(d);
   } else if (c.eat("+r")) {
-    c.fail("a register offset is reserved until M3");
+    c.fail("a register offset is reserved");
   }
   return v;
 }
@@ -319,7 +319,7 @@ Record parseRecord(const std::string &line) {
   // The control records stay reserved.
   for (const char *control : {"reg.load", "reg.set", "loop", "endloop"})
     if (head == control)
-      fail("record '" + head + "' is reserved until M3");
+      fail("record '" + head + "' is reserved");
   return fields(t);
 }
 

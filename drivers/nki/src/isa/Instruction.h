@@ -25,7 +25,7 @@ using Decode = InstructionPtr (*)(Fields &);
 // The kind's decode; throws for an undecoded kind.
 Decode decoder(const std::string &kind);
 
-// One decode per M1 kind; each refuses unknown fields.
+// One decode per decoded kind; each refuses unknown fields.
 InstructionPtr decodeDmaCopy(Fields &fields);
 InstructionPtr decodeMemset(Fields &fields);
 InstructionPtr decodeActivation(Fields &fields);
