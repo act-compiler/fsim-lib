@@ -60,6 +60,8 @@ struct View;
 struct Dyn {
   std::shared_ptr<const View> view;
   int64_t scale = 0;
+  // The index values keeping the view in its allocation, set on resolve.
+  int64_t first = 0, last = 0;
 };
 
 struct View {

@@ -59,7 +59,7 @@ void checkMatmul(const std::map<int64_t, Alloc> &allocs, const View &dst, const 
   arena(stationary, Arena::sbuf, "stationary");
   arena(moving, Arena::sbuf, "moving");
   arena(dst, Arena::psum, "dst");
-  // A run-time offset is checked once resolved.
+  // A run-time offset hides the bank; its write is refused.
   if (dst.dyn)
     return;
   // The dst's bytes within a partition lie in one bank.

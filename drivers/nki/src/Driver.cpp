@@ -1,6 +1,5 @@
 #include "Driver.h"
 
-#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -24,11 +23,6 @@ std::vector<Type> types(const std::vector<fsim::Tensor> &state) {
   return out;
 }
 
-// Whether a view takes a run-time offset.
-bool offsets(const std::vector<View *> &views) {
-  return std::any_of(views.begin(), views.end(), [](const View *v) { return v->dyn.has_value(); });
-}
-
 } // namespace
 
 Driver::Driver(std::string trace) : path_(std::move(trace)) {
@@ -43,16 +37,15 @@ void Driver::validate() {
   read(&Driver::check);
 }
 
-bool Driver::hasRuntimeOffset() {
-  read(&Driver::scan);
-  return runtimeOffset_;
-}
-
 void Driver::trace(std::function<void(const Alloc &)> add,
                    std::function<fsim::Pipeline &()> upload) {
   add_ = std::move(add);
   upload_ = std::move(upload);
-  pipeline_ = nullptr;
+  // A +s() offset anywhere keeps the oob flag in the state.
+  std::unique_ptr<std::istream> in = open();
+  std::string line;
+  while (!oob_ && std::getline(*in, line))
+    oob_ = line.find("+s(") != std::string::npos;
   read(&Driver::record, &Driver::begin);
 }
 
@@ -63,13 +56,16 @@ Accelerator &Driver::accelerator() {
 std::vector<fsim::Tensor> Driver::state() {
   using fsim::ElementType;
   Accelerator &a = *accelerator_;
-  return {
+  std::vector<fsim::Tensor> state = {
       {ElementType::ui8, {1, a.rowBytes(Arena::hbm)}, a.hbm.data()},
       {ElementType::ui8, {kPartitions, kSbufRow}, a.sbuf.data()},
       {ElementType::ui8, {kPartitions, kPsumRow}, a.psum.data()},
       {ElementType::f32, {kPartitions, 1}, a.reduceRegs.data()},
       {ElementType::f32, {kPartitions, 1}, a.accumulatorRegs.data()},
   };
+  if (oob_)
+    state.push_back({ElementType::ui8, {1}, a.oob.data()});
+  return state;
 }
 
 const std::vector<Output> &Driver::outputs() const {
@@ -89,7 +85,6 @@ void Driver::read(void (Driver::*each)(const std::string &), void (Driver::*star
   std::unique_ptr<std::istream> in = open();
   std::string line;
   size_t number = 0;
-  ended_ = false;
   try {
     while (std::getline(*in, line)) {
       ++number;
@@ -111,12 +106,8 @@ void Driver::read(void (Driver::*each)(const std::string &), void (Driver::*star
 }
 
 void Driver::begin() {
-  if (!accelerator_)
-    accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
-  accelerator_->reset();
+  accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
   module_ = std::make_unique<Module>(types(state()));
-  kernel_.outputs.clear();
-  instructionCounter_ = 0;
 }
 
 void Driver::record(const std::string &line) {
@@ -152,15 +143,7 @@ void Driver::execute(Fields &fields) {
 }
 
 void Driver::resolve(Fields &fields) {
-  std::vector<View *> views = fields.views();
-  // A run-time offset reads state: flush, sync, read back.
-  if (offsets(views)) {
-    if (!pipeline_)
-      upload();
-    submit();
-    sync();
-  }
-  for (View *v : views)
+  for (View *v : fields.views())
     *v = accelerator_->resolve(*v);
 }
 
@@ -189,14 +172,6 @@ void Driver::check(const std::string &line) {
   }
 }
 
-void Driver::scan(const std::string &line) {
-  Record r = parseRecord(line);
-  if (auto *f = std::get_if<Fields>(&r))
-    runtimeOffset_ = runtimeOffset_ || offsets(f->views());
-  else if (std::holds_alternative<End>(r))
-    ended_ = true;
-}
-
 void Driver::upload() {
   pipeline_ = &upload_();
 }
@@ -205,10 +180,6 @@ void Driver::submit() {
   std::string text = module_->text();
   if (!text.empty())
     pipeline_->submit(std::move(text));
-}
-
-void Driver::sync() {
-  pipeline_->sync();
 }
 
 void Driver::finish() {

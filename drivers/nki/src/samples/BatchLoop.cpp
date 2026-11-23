@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 
 #include "Driver.h"
@@ -27,19 +28,13 @@ BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs,
 }
 
 void BatchLoop::run() {
-  // Above one sample, a trace with a run-time offset runs at a batch size of 1.
-  runtimeOffset_ = fsim::Pipeline::num_samples() > 1 && driver_.hasRuntimeOffset();
   trace();
   store();
-  // Each later batch traces again with a run-time offset, else replays the first's executables.
+  // Each later batch replays the first's executables.
   for (first_ = batchSize_; first_ < inputs_.size(); first_ += batchSize_) {
-    if (runtimeOffset_) {
-      trace();
-    } else {
-      pipeline_->exclude(timed([&] { load(); }));
-      pipeline_->replay();
-      pipeline_->sync();
-    }
+    pipeline_->exclude(timed([&] { load(); }));
+    pipeline_->replay();
+    pipeline_->sync();
     store();
   }
   pipeline_->summary(std::cout);
@@ -47,21 +42,12 @@ void BatchLoop::run() {
 }
 
 void BatchLoop::add(const Alloc &alloc) {
-  if (!pipeline_)
-    inputs_.add(alloc);
+  inputs_.add(alloc);
 }
 
 fsim::Pipeline &BatchLoop::upload() {
-  // A later trace's loads stay out of the run's clock.
-  if (pipeline_) {
-    pipeline_->exclude(timed([&] { load(); }));
-    pipeline_->begin_trace();
-    return *pipeline_;
-  }
-  // B, or 1 with a run-time offset; N draws, more padding the last batch to B.
+  // B; N draws, more padding the last batch to B.
   batchSize_ = fsim::Pipeline::batch_size(runtime_, driver_.state());
-  if (runtimeOffset_)
-    batchSize_ = 1;
   inputs_.draw((size_t{fsim::Pipeline::num_samples()} + batchSize_ - 1) / batchSize_ * batchSize_);
   driver_.accelerator().hold(batchSize_);
   load();
@@ -88,8 +74,14 @@ void BatchLoop::store() {
     // Before the first byte, every sample's outputs must fit.
     if (first_ == 0)
       checkOutputs(accelerator, driver_.outputs(), inputs_.size(), outputs_);
-    for (uint32_t m = 0; m < batchSize_; ++m)
+    for (uint32_t m = 0; m < batchSize_; ++m) {
+      // The sync handed back the sample's oob flag with its outputs.
+      if (accelerator.oob[m])
+        throw std::runtime_error("a run-time offset left its allocation in sample " +
+                                 std::to_string(first_ + m) + " (input set " +
+                                 std::to_string(inputs_.draws()[first_ + m]) + ")");
       storeOutputs(accelerator, driver_.outputs(), m, first_ + m, outputs_);
+    }
   }));
 }
 

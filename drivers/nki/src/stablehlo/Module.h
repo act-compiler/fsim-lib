@@ -29,12 +29,12 @@ inline const char *mlir(Dtype dtype) {
   return names[static_cast<int>(dtype)];
 }
 
-// The state parameters, in @main's order; arenas first.
-enum class Slot { hbm, sbuf, psum, reduceRegs, accumulatorRegs };
+// The state parameters, in @main's order; arenas first, oob with a +s() offset only.
+enum class Slot { hbm, sbuf, psum, reduceRegs, accumulatorRegs, oob };
 
 class Module {
 public:
-  // The arenas are ui8[P, R]; the registers f32[P, 1].
+  // The arenas are ui8[P, R]; the registers f32[P, 1]; the oob flag ui8[1].
   explicit Module(std::vector<Type> state);
 
   // Values in the module, the parameters counted.
@@ -45,9 +45,9 @@ public:
   // The text is empty when the module holds no ops.
   std::string text();
 
-  // The view's elements, [counts...] in its dtype.
+  // The view's elements, [counts...] in its dtype; a run-time offset gathers on the device.
   int read(const View &view);
-  // Writes the view's dtype and count, in flat order.
+  // Writes the view's dtype and count, in flat order; refuses a run-time offset.
   void write(const View &view, int value);
   // A slot's register lanes [first, first + count), f32[count, 1].
   int readLanes(Slot slot, int64_t first, int64_t count);
@@ -104,6 +104,9 @@ private:
   int index(int64_t value);
   // Refuses lanes past the slot's partitions.
   void lanes(Slot slot, int64_t first, int64_t count) const;
+  // The [P, extent] dtype grid from element first at index low, moved by the view's +s() offset.
+  // A clamped index sets the oob flag.
+  int window(const View &view, int64_t low, int64_t first, int64_t extent);
   // The arena bitcast to a [P, R/K] dtype grid.
   int bitcastTo(Arena arena, Dtype dtype);
   // The grid bitcast back to the arena's bytes.

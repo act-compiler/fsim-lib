@@ -112,19 +112,16 @@ struct Pipeline::Impl {
 
   // The run's clock and marks, on the caller's thread.
   Clock::time_point begin = Clock::now();
-  Clock::time_point trace_begin = begin; // the current trace's start
-  std::optional<double> tracing_ms;      // summed over traces
+  std::optional<double> tracing_ms;
   std::optional<size_t> trace_length;
   bool synced = false;    // a sync() has run
   bool settled = false;   // the last sync() returned, no submit or replay since
   bool mid_trace = false; // a sync before end_trace has run
   size_t replays = 0;     // replays run
-  size_t retraces = 0;    // traces after the first
-  size_t first = 0;       // the current trace's first module
 
-  // Whether a replay can come: N above B, no mid-trace sync or next trace yet.
+  // Whether a replay can come: N above B, no mid-trace sync yet.
   bool keeps() const {
-    return num_samples > batch_size && !mid_trace && !retraces;
+    return num_samples > batch_size && !mid_trace;
   }
 
   // Guarded by mutex.
@@ -542,10 +539,10 @@ void Pipeline::submit(std::string module) {
   if (impl_->error)
     std::rethrow_exception(impl_->error);
 #ifdef FSIM_VARIANT_TAIDL
-  // One module per trace; a second is the pipeline's error.
-  if (impl_->stats.modules.size() > impl_->first) {
+  // One module per run; a second is the pipeline's error.
+  if (!impl_->stats.modules.empty()) {
     impl_->error = std::make_exception_ptr(std::runtime_error(
-        "fsim: a second module; this build runs one module at the end of the trace"));
+        "fsim: a second module; this build runs one module at the end of the run"));
     std::rethrow_exception(impl_->error);
   }
 #endif
@@ -625,32 +622,17 @@ void Pipeline::exclude(double ms) {
       std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
 }
 
-void Pipeline::begin_trace() {
-  // The threads idle after the last sync, so the caller drives the device.
-  impl_->upload();
-  // Nothing replays once the next trace begins.
-  impl_->forget();
-  impl_->settled = false;
-  impl_->trace_length.reset();
-  ++impl_->retraces;
-  {
-    std::lock_guard lock(impl_->mutex);
-    impl_->first = impl_->stats.modules.size();
-  }
-  impl_->trace_begin = Clock::now();
-}
-
 Stats Pipeline::stats() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->stats;
 }
 
 void Pipeline::begin_run() {
-  impl_->begin = impl_->trace_begin = Clock::now();
+  impl_->begin = Clock::now();
 }
 
 void Pipeline::end_trace(size_t trace_length) {
-  impl_->tracing_ms = impl_->tracing_ms.value_or(0) + Impl::ms_since(impl_->trace_begin);
+  impl_->tracing_ms = Impl::ms_since(impl_->begin);
   impl_->trace_length = trace_length;
   // The trace's last modules follow, so the stats wait for a sync.
   impl_->settled = false;
@@ -681,8 +663,7 @@ void Pipeline::summary(std::ostream &out) const {
   out << "fsim stats: tracing=" << seconds(impl_->tracing_ms) << " overhead=" << seconds(overhead)
       << " simulation=" << seconds(simulation) << " tracing_overhead=" << seconds(tracing_overhead)
       << " compile_overhead=" << seconds(compile) << " wall=" << seconds(wall) << " trace=" << trace
-      << " modules=" << modules
-      << " samples=" << impl_->batch_size * (1 + impl_->replays + impl_->retraces)
+      << " modules=" << modules << " samples=" << impl_->batch_size * (1 + impl_->replays)
       << " batch_size=" << impl_->batch_size << "\n";
   // A killed run keeps the line.
   out.flush();

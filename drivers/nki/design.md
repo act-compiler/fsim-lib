@@ -45,7 +45,7 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 
 - A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace, holding stdin's text in memory; the runner always passes the file.
-- Its batch loop, in `src/samples/`, reads the trace in full each time it traces.
+- `Driver::trace` first scans the trace's text for a `+s(...)` offset, then reads the trace in full.
 - `<inputs>/<name>.bin` holds its input's tensor from each of the case's `M` input sets, back to back.
 - `--sampling S` draws each simulated sample's input set:
   - `random`, the default: a uniform draw with replacement over the `M` input sets, from a fixed-seed `std::mt19937_64`, the same on every run with one C++ standard library
@@ -55,8 +55,6 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
 - Each later batch loads its samples and replays the first's executables.
 - Extra samples pad the last batch to `B`, and every one is simulated and checked.
-- Above one sample, a parse-only reading first looks for a `+s(...)` run-time offset, which syncs mid-trace.
-  Such a trace runs at a batch size of 1: each sample traces alone, and the pipeline begins its next trace for it.
 - `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32, under either `--sampling` value.
 - `fsim-nki` refuses before the first output byte when the outputs pass half the free space of `--outputs`, or 1 GiB.
 - `--trigger`, `--overlap` and `--num-samples` are the library's knobs, and `--sampling` the driver's.
@@ -71,7 +69,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 - [fsim/README.md](../../fsim/README.md) defines its fields.
 - The run's clock starts after the state's upload, at the first instruction, and leaves out the header, the allocations and every input load and output store.
 - The trace ends at `end`, with `trace` the instructions run.
-- The line prints at each trace's `end`, so a run killed in a sync keeps it, and again after every sample's outputs are written.
+- The line prints at `end`, so a run killed in a sync keeps it, and again after every sample's outputs are written.
 - `bench.sh run` reads the last line into its status line.
 
 `--validate` checks a trace without simulating it:
@@ -80,7 +78,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 - It takes no `--inputs`, `--outputs` or `--sampling`.
 - It checks that each `output` names a declared allocation.
 - It ends with one line, `checked records=<n> allocs=<n> bank_unchecked=<n>`.
-- `bank_unchecked` counts the `nc_matmul` dsts whose `+s(...)` offset leaves the bank check to run time.
+- `bank_unchecked` counts the `nc_matmul` dsts whose `+s(...)` offset hides the bank, which a run refuses.
 
 ## The record format
 
@@ -176,6 +174,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - `+s(<view>)*<k>`, a run-time offset, adds the index the inner view reads, times `k` elements.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
 - An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
+- A `+s(...)` offset is lowered on a read view; a written view with one is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
 - The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension.
 - `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.
@@ -253,35 +252,35 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 4. `src/Driver.{h,cpp}`
 5. `src/samples/` and `src/main.cpp`
 
-| path                                  | role                                                                                                                        |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement                |
-| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                        |
-| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                           |
-| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                              |
-| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken                  |
-| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                                  |
-| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                                 |
-| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`                   |
-| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                            |
-| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                          |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith`   |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask             |
-| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                  |
-| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text          |
-| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, a parse-only reading for `+s(...)` offsets, `resolve`, soft trigger |
-| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over a run's batches, replay, and a batch size of 1 for a trace with a `+s(...)` offset               |
-| `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                       |
-| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                     |
-| `src/main.cpp`                        | the `fsim-nki` command line                                                                                                 |
-| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                                |
+| path                                  | role                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement              |
+| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                      |
+| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                         |
+| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                            |
+| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken                |
+| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                                |
+| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                               |
+| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`                 |
+| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                          |
+| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                        |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`, `scalarOp`, `scalarArith` |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas, registers and `oob`, the allocation table, the PSUM written mask    |
+| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank                |
+| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text        |
+| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                           |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over a run's batches, and replay                                                                    |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                     |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                   |
+| `src/main.cpp`                        | the `fsim-nki` command line                                                                                               |
+| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                              |
 
 ## From a record to StableHLO
 
 The library runs a fixed set of state tensors through modules.
 They are the driver's data models, in TAIDL's sense of a declared buffer an instruction addresses ([declarations](https://github.com/act-compiler/taidl/blob/v2.14/docs/declarations.md)).
 `hbm` plays TAIDL's `d0`, the off-chip memory as a flat buffer of bytes.
-The driver's state is five:
+The driver's state is five tensors, with a sixth, `oob`, when the trace's text holds a `+s(...)` offset:
 
 | state              | type               | what it is                                                                                                                                                                               |
 | ------------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -290,6 +289,7 @@ The driver's state is five:
 | `psum`             | `ui8[128, 16384]`  | PSUM, 8 banks of 2 KiB per partition                                                                                                                                                     |
 | `reduce_regs`      | `f32[128, 1]`      | the activation engine's reduce registers ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html))                      |
 | `accumulator_regs` | `f32[128, 1]`      | the Vector Engine's accumulator registers ([nki.isa.tensor_scalar_reduce](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar_reduce.html)) |
+| `oob`              | `ui8[1]`           | set when a `+s(...)` index clamps to keep its view in its allocation                                                                                                                     |
 
 - SBUF is modelled at the documented 224 KiB per partition.
 - nki's `nl.tile_size.sbuf_fmax_bytes` gives 212984 usable bytes per partition on trn2, 16 KiB and 8 bytes below 224 KiB; the driver checks the documented bound.
@@ -306,6 +306,13 @@ It lowers to the ops the [StableHLO spec](https://openxla.org/stablehlo/spec) de
 - A pattern that nests only with its entries sorted by stride, outer first, is read in that order and transposed back to the view's.
 - Any other pattern falls back to a gather with a constant index.
 - A zero stride becomes a broadcast back to the full shape.
+- A view with a `+s(...)` offset reads the index, clamps it to the range `Accelerator::resolve` finds, and computes the window's first byte from it.
+  The range holds the index values that keep the view in its allocation.
+- A one-index [gather](https://openxla.org/stablehlo/spec#gather) takes that window from the arena's bytes, every partition, and bitcasts it to the dtype grid.
+- The paths above then read the view from the window as from the arena.
+- The window spans what the path slices: the one-level slice, the nested window, or the gathered elements.
+- A nested view's window stays in the arena row at every index of the range, or the view takes the gather path.
+- An index in its range reads the bytes a constant address would; one outside it clamps and sets `oob`, where a constant address past the allocation is refused.
 - The result is `[count_0, ..., count_n]` in the view's dtype.
 - compute: the ops the numpy simulator spells, over f32 converts of the operands.
 - `write`: a nested pattern at partition stride 1 is a dynamic_update_slice of the arena's window, after an update of the delinearized window when the pattern leaves gaps.
@@ -320,9 +327,15 @@ Control and state:
 - `Driver::execute` asks `Pipeline::soft_trigger` for the module's op count before each instruction.
 - When it fires, `Module::text` ends the module and the driver submits its text, and the module starts afresh.
 - Under `overlap`, submitted modules compile on the library's threads while the driver keeps decoding.
-- `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
-- It submits the module, syncs, and reads the index from the arena's host copy, so the offset enters the module as a constant address.
-- `Accelerator::resolve` then checks every view against its allocation, its arena and its dtype's alignment.
+- `Driver::resolve` has `Accelerator::resolve` check every view before the instruction's decode and semantics.
+- It checks each view against:
+  - its allocation
+  - its arena
+  - its dtype's alignment
+- For a `+s(...)` offset, it finds the range of index values that keeps the view in its allocation, and checks the view at the first.
+- The index stays on the device, so no trace needs a mid-trace `sync`, one before its `end`.
+- A sample's load clears its `oob`, and the sync hands it back with the rest of the state.
+- A set `oob` fails the run when the store of that sample's outputs reads it, naming the sample and its input set.
 - `nc_matmul` resolves `accumulate` at trace time from a PSUM written mask in `Accelerator`, per allocation:
   - Each PSUM byte holds the allocation that last wrote it, so a new allocation starts unwritten.
   - Any write to PSUM, by a matmul or not, sets its bytes to the view's allocation.
@@ -366,7 +379,7 @@ The limits are trn2's, from the NKI 2.32 docs:
 - The arena bounds hold for every allocation; a kernel-placed one is checked at the kernel's address.
 - A driver-placed tensor already fails at record time when its placement overflows, and `fsim-nki` bounds it again.
 - The bank check holds for every dst, since the recorder places no PSUM tensor that fits a bank across a bank boundary.
-- A dst with a `+s(...)` offset is bank-checked once resolved, and `--validate` counts it in `bank_unchecked`.
+- A dst with a `+s(...)` offset is refused at its write, and `--validate` counts it in `bank_unchecked`.
 - The `xfail` bench source holds one kernel per limit.
   Its gen logs nki's compile path and `nki.simulate` on each kernel, and its run expects `fsim-nki` to reject each:
 

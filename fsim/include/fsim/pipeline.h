@@ -82,7 +82,7 @@ public:
   // Prints the run's summary line so far, '-' for a value not yet known.
   void summary(std::ostream &out) const;
 
-  // The run: N samples in batches of B, each later batch a replay or the next trace.
+  // The run: N samples in batches of B, each later batch a replay.
   // N, the --num-samples sample count.
   static uint32_t num_samples();
   // B, the batch size for --num-samples N and one sample's state.
@@ -91,9 +91,6 @@ public:
   // After a sync(), replays the kept executables in submission order; kept at N above B.
   // Uploads the state anew from the constructor's host memory; sync() reads the samples back.
   void replay();
-  // Begins the run's next trace: uploads the state anew from the host memory.
-  // The kept executables go, and nothing replays after.
-  void begin_trace();
   // Leaves ms of a driver's loads and stores out of the run's clock.
   void exclude(double ms);
 
