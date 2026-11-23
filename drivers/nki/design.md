@@ -80,7 +80,7 @@ instr    := kind (field "=" value)*
 control  := "reg.load" reg view | "reg.set" reg int | "loop" reg int int int | "endloop"
 output   := "output" name id
 value    := view | number | "true" | "false" | "none" | word | "[" (number ("," number)*)? "]" | affine
-view     := arena "@" addr ":" dtype pattern dyn?
+view     := arena id "@" addr ":" dtype pattern dyn?
 pattern  := "[" "[" stride "," count "]" ("," "[" stride "," count "]")* "]"
 dyn      := "+s(" view ")*" int | "+r" int "*" int
 affine   := "aff(" pattern "," int ")"
@@ -91,9 +91,9 @@ reg      := "r" int
 
 ### Header
 
-`nki-trace 1 target=trn2 lnc=1 hbm=<bytes>` is the first line.
+`nki-trace 2 target=trn2 lnc=1 hbm=<bytes>` is the first line.
 
-- `1` is the format version; the parser refuses any other.
+- `2` is the format version; the parser refuses any other, version 1 included, and names the version it read.
 - `hbm=` is the HBM arena's capacity, which the recorder sets before the kernel runs.
 - The capacity is the kernel's highest HBM byte plus the inputs, the outputs and a scratch reserve.
 - The reserve is the inputs' and outputs' size, or the `reserve` bytes `record(build, out, reserve)` takes.
@@ -127,9 +127,10 @@ The recorder places a tensor without an address:
 
 ### Views
 
-A view is one operand: `sbuf@0,64:bf16[[1,128],[0,1],[1,32]]`.
+A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 
-- `arena@addr` is the first byte, as in the allocation; `dtype` is the operand's dtype, a bitcast of the arena's bytes.
+- `%3` is the allocation the view is over; `fsim-nki` refuses an id no allocation of that arena declared.
+- `arena` and `@addr` give the first byte, as in the allocation; `dtype` is the operand's dtype, a bitcast of the arena's bytes.
 - The pattern is `[[stride, count], ...]`, outer dimension first.
 - For `sbuf` and `psum` the first entry is the partition dimension, its stride in partitions, 0 for a broadcast.
 - Every other entry's stride is in elements of `dtype` within the partition, or within HBM, 0 for a broadcast.
@@ -181,18 +182,22 @@ Four records are reserved in the format, so a rolled loop or a register loop is 
 The records of `rmsnorm_tkg/llama3_8b_tp4`, abridged, as the recorder emits them:
 
 ```
-nki-trace 1 target=trn2 lnc=1 hbm=49152
+nki-trace 2 target=trn2 lnc=1 hbm=49152
 alloc %0 hbm@0 bf16[1,1,4096] driver input=input
 alloc %1 hbm@8192 bf16[1,4096] driver input=gamma
 alloc %2 hbm@16384 bf16[128,1,32] driver name=out
 alloc %3 sbuf@0,0 bf16[128,1,32] driver
-dma_copy dst=sbuf@0,0:bf16[[1,128],[32,1],[32,1],[1,32]] src=hbm@0:bf16[[32,128],[4096,1],[4096,1],[1,32]] oob_is_err=true engine=dma
+dma_copy dst=sbuf%3@0,0:bf16[[1,128],[32,1],[32,1],[1,32]] src=hbm%0@0:bf16[[32,128],[4096,1],[4096,1],[1,32]] oob_is_err=true engine=dma
 alloc %5 sbuf@0,128 f32[128,1] driver
-memset dst=sbuf@0,128:f32[[1,128],[1,1]] value=1e-06 engine=unknown
+memset dst=sbuf%5@0,128:f32[[1,128],[1,1]] value=1e-06 engine=unknown
+alloc %6 sbuf@0,132 f32[128,128] driver
+memset dst=sbuf%6@0,132:f32[[1,128],[1,128]] value=1.0 engine=unknown
 alloc %7 sbuf@0,644 f32[128,1,32] driver
-activation dst=sbuf@0,644:f32[[1,128],[32,1],[1,32]] op=square data=sbuf@0,0:bf16[[1,128],[32,1],[1,32]] bias=0.0 scale=1.0 reduce_op=none reduce_res=none reduce_cmd=idle
-tensor_reduce_arith dst=sbuf@0,772:f32[[1,128],[1,1]] op=add data=sbuf@0,644:f32[[1,128],[32,1],[1,32]] num_r_dim=1 negate=false keepdims=false
-nc_matmul dst=psum@0,0:f32[[1,128],[1,1]] stationary=sbuf@0,132:f32[[1,128],[1,128]] moving=sbuf@0,772:f32[[1,128],[1,1]] is_transpose=false row_pos=none col_pos=none perf_mode=none accumulate=none
+activation dst=sbuf%7@0,644:f32[[1,128],[32,1],[1,32]] op=square data=sbuf%3@0,0:bf16[[1,128],[32,1],[1,32]] bias=0.0 scale=1.0 reduce_op=none reduce_res=none reduce_cmd=idle
+alloc %8 sbuf@0,772 f32[128,1] driver
+tensor_reduce_arith dst=sbuf%8@0,772:f32[[1,128],[1,1]] op=add data=sbuf%7@0,644:f32[[1,128],[32,1],[1,32]] num_r_dim=1 negate=false keepdims=false
+alloc %10 psum@0,0 f32[128,1] driver
+nc_matmul dst=psum%10@0,0:f32[[1,128],[1,1]] stationary=sbuf%6@0,132:f32[[1,128],[1,128]] moving=sbuf%8@0,772:f32[[1,128],[1,1]] is_transpose=false row_pos=none col_pos=none perf_mode=none accumulate=none
 output out %2
 end
 ```
@@ -272,15 +277,17 @@ Control and state:
 - Under `overlap`, submitted modules compile on the library's threads while the driver keeps decoding.
 - `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
 - It submits the module, syncs, and reads the index from the arena's host copy, so the offset enters the module as a constant address.
-- `Accelerator::resolve` then checks every view against its arena and its dtype's alignment.
-- `nc_matmul` resolves `accumulate` at trace time from a per-byte PSUM written mask in `Accelerator`:
-  - A PSUM allocation, kernel-placed or driver-placed, clears the mask over its bytes.
-  - Any write to PSUM, by a matmul or not, sets its bytes.
+- `Accelerator::resolve` then checks every view against its allocation, its arena and its dtype's alignment.
+- `nc_matmul` resolves `accumulate` at trace time from a PSUM written mask in `Accelerator`, per allocation:
+  - Each PSUM byte holds the allocation that last wrote it, so a new allocation starts unwritten.
+  - Any write to PSUM, by a matmul or not, sets its bytes to the view's allocation.
   - `true` adds onto the tile.
-  - `false` clears the mask over the newest PSUM allocation holding the destination, then overwrites.
-  - `none` adds where the tile was written and overwrites elsewhere.
+  - `false` clears the mask over the destination's allocation, then overwrites.
+  - `none` adds where the destination's allocation wrote the tile and overwrites elsewhere.
   - `none` with `is_transpose=true` always overwrites.
-  - This is nki.simulate's per-tensor rule while no two live PSUM tensors overlap, since a view names no tensor.
+  - A write by another allocation at the same bytes overwrites them, since the bytes alias.
+  - It matches nki.simulate except when aliased allocations interleave writes.
+  - So `true`, or a non-transposing `none`, on an allocation whose bytes another overwrote is refused, until an `accumulate=false` write restarts it.
 - The reduce register lanes index from the operand's partition start, and `reduce_res` reads them.
 - `reduce_cmd=reset` zeroes them, `reset_reduce` stores the reduction, and `reduce` adds it on.
 - `activation` refuses a `reduce_op` other than `add` with `reduce` or `reset_reduce`, since the ISA reduces by add only ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)).
@@ -328,7 +335,7 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 
 - Where the NKI 2.32 docs are silent, call a pattern undefined, or contradict each other, the driver follows nki.simulate.
 - So it accepts the documented contradictions the suite relies on, as nki.simulate and the compiler do: `nc_matmul` at `col_pos` (start_column) 32, 64 or 96 ([nki.isa.nc_matmul](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_matmul.html)), and a transposing `nc_matmul` whose dst is in its input's dtype, bf16 ([nki.isa.nc_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_transpose.html)).
-- `nc_matmul` with `accumulate=none` adds onto a PSUM tile that a `memset` or copy wrote, as nki.simulate does; the docs call this undefined on trn2.
+- `nc_matmul` with `accumulate=none` adds onto a PSUM tile that a `memset` or copy wrote, as nki.simulate does, when the write was through the same allocation; the docs call this undefined on trn2.
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
 - `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.

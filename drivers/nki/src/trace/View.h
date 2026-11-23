@@ -64,6 +64,7 @@ struct Dyn {
 
 struct View {
   Arena arena = Arena::hbm;
+  int64_t alloc = 0; // the allocation's id
   int64_t partition = 0;
   int64_t byte = 0;
   Dtype dtype = Dtype::u8;
@@ -82,9 +83,10 @@ struct View {
   std::vector<Entry> free() const {
     return {pattern.begin() + (partitioned() ? 1 : 0), pattern.end()};
   }
-  // The first byte as arena@partition,byte.
+  // The first byte as arena%id@partition,byte.
   std::string address() const {
-    return std::string(name(arena)) + "@" + std::to_string(partition) + "," + std::to_string(byte);
+    return std::string(name(arena)) + "%" + std::to_string(alloc) + "@" +
+           std::to_string(partition) + "," + std::to_string(byte);
   }
   // The operand's shape: the counts.
   std::vector<int64_t> shape() const;

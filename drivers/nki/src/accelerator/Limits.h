@@ -11,8 +11,6 @@ namespace nki {
 
 constexpr int64_t kPsumBank = 2048; // bytes per partition per bank
 
-// The newest allocation holding the view's first byte, or none.
-const Alloc *holder(const std::map<int64_t, Alloc> &allocs, const View &view);
 // Refuses a duplicate id, bad dim or overflowing tensor.
 void checkAlloc(const std::map<int64_t, Alloc> &allocs, const Alloc &alloc, int64_t hbm);
 // Refuses operands off their arenas or a dst across banks.

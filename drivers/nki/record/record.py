@@ -9,7 +9,7 @@ from nki._backends.simulator.state import SimulatorContext, current_context
 from nki.language.buffers import shared_hbm
 from nki.language.tensor import NkiTensor
 
-HEADER = 'nki-trace 1 target=trn2 lnc=1 hbm={}'
+HEADER = 'nki-trace 2 target=trn2 lnc=1 hbm={}'
 
 
 def run(build, write, hbm, floors):

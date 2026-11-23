@@ -31,27 +31,33 @@ public:
   void allocate(const Alloc &alloc, const std::string &inputs);
   // The view, its offset read from the host copies, checked.
   View resolve(const View &view);
-  // Marks PSUM bytes written, by any instruction.
+  // Marks PSUM bytes written by the view's allocation.
   void wrote(const View &view);
-  // Per PSUM element, whether written since its allocation.
+  // Per PSUM element, whether its allocation wrote it.
   std::vector<bool> started(const View &view) const;
-  // Clears the mask over the newest allocation holding it.
+  // Clears the mask over the view's allocation, and its clobbered entry.
   void restart(const View &view);
   // Writes an output's bytes to <dir>/<name>.bin.
   void store(const Output &output, const std::string &dir) const;
+  // Refuses the view's allocation if another overwrote it.
+  void unclobbered(const View &view) const;
 
   std::vector<uint8_t> hbm, sbuf, psum;
   std::vector<float> reduceRegs; // f32[128, 1]
   std::map<int64_t, Alloc> allocs;
-  std::vector<uint8_t> written; // per PSUM byte: written since allocated
+  // A span of PSUM bytes to end, last written by alloc.
+  struct Owner {
+    int64_t end;
+    int64_t alloc;
+  };
 
 private:
-  // Refuses a view off its arena or dtype grid.
+  // Refuses a view off its allocation, arena or dtype grid.
   void check(const View &view) const;
-  // Sets the mask over a view's bytes.
-  void mark(const View &view, uint8_t value);
-  // Clears the mask over an allocation's bytes.
-  void unwrite(const Alloc &alloc);
+
+  // Per PSUM partition: the written spans by first byte; unwritten bytes have none.
+  std::vector<std::map<int64_t, Owner>> written;
+  std::map<int64_t, int64_t> clobbered; // allocation -> the last that overwrote its bytes
 };
 
 } // namespace nki
