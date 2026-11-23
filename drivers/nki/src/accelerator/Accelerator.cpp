@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <stdexcept>
 
 #include "accelerator/Limits.h"
@@ -48,15 +47,20 @@ void cut(std::map<int64_t, Accelerator::Owner> &row, int64_t at) {
 
 } // namespace
 
-Accelerator::Accelerator(int64_t hbm)
-    : hbm(capacity(hbm)), sbuf(kPartitions * kSbufRow), psum(kPartitions * kPsumRow),
-      reduceRegs(kPartitions), written(kPartitions) {
+Accelerator::Accelerator(int64_t hbm) : written(kPartitions), hbmRow_(capacity(hbm)) {
+}
+
+void Accelerator::hold(uint32_t batchSize) {
+  hbm.assign(batchSize * hbmRow_, 0);
+  sbuf.assign(batchSize * kPartitions * kSbufRow, 0);
+  psum.assign(batchSize * kPartitions * kPsumRow, 0);
+  reduceRegs.assign(batchSize * kPartitions, 0.0f);
 }
 
 int64_t Accelerator::rowBytes(Arena arena) const {
   switch (arena) {
   case Arena::hbm:
-    return static_cast<int64_t>(hbm.size());
+    return hbmRow_;
   case Arena::sbuf:
     return kSbufRow;
   case Arena::psum:
@@ -74,22 +78,29 @@ uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte) {
   return bytes.data() + partition * rowBytes(arena) + byte;
 }
 
-void Accelerator::allocate(const Alloc &a, const std::string &inputs) {
-  checkAlloc(allocs, a, static_cast<int64_t>(hbm.size()));
+uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte, uint32_t batchIndex) {
+  // Batch index m's partition p is the host row m * partitions + p.
+  return at(arena, batchIndex * partitions(arena) + partition, byte);
+}
+
+const uint8_t *Accelerator::at(Arena arena, int64_t partition, int64_t byte,
+                               uint32_t batchIndex) const {
+  return const_cast<Accelerator *>(this)->at(arena, partition, byte, batchIndex);
+}
+
+void Accelerator::allocate(const Alloc &a) {
+  checkAlloc(allocs, a, hbmRow_);
   allocs.emplace(a.id, a);
-  if (a.input.empty())
-    return;
-  if (a.arena != Arena::hbm)
-    fail("input " + a.input + " is not in hbm");
-  std::string path = inputs + "/" + a.input + ".bin";
-  std::ifstream in(path, std::ios::binary | std::ios::ate);
-  if (!in)
-    fail("cannot read " + path);
-  if (static_cast<int64_t>(in.tellg()) != a.rowBytes())
-    fail(path + " holds " + std::to_string(in.tellg()) + " bytes, input " + a.input + " " +
-         std::to_string(a.rowBytes()));
-  in.seekg(0);
-  in.read(reinterpret_cast<char *>(at(Arena::hbm, 0, a.byte)), a.rowBytes());
+}
+
+void Accelerator::zero(uint32_t batchIndex) {
+  auto zero = [&](auto &array, int64_t size) {
+    std::fill_n(array.begin() + batchIndex * size, size, 0);
+  };
+  zero(hbm, hbmRow_);
+  zero(sbuf, kPartitions * kSbufRow);
+  zero(psum, kPartitions * kPsumRow);
+  zero(reduceRegs, kPartitions);
 }
 
 void Accelerator::check(const View &v) const {
@@ -210,23 +221,6 @@ void Accelerator::unclobbered(const View &v) const {
   if (it != clobbered.end())
     fail("psum allocation %" + std::to_string(v.alloc) + " accumulates after allocation %" +
          std::to_string(it->second) + " overwrote its bytes; aliased accumulation is refused");
-}
-
-void Accelerator::store(const Output &o, const std::string &dir) const {
-  auto it = allocs.find(o.id);
-  if (it == allocs.end())
-    fail("output " + o.name + " names no allocation %" + std::to_string(o.id));
-  const Alloc &a = it->second;
-  std::string path = dir + "/" + o.name + ".bin";
-  std::ofstream out(path, std::ios::binary);
-  const std::vector<uint8_t> &bytes = a.arena == Arena::hbm    ? hbm
-                                      : a.arena == Arena::sbuf ? sbuf
-                                                               : psum;
-  for (int64_t p = a.partition; p < a.partition + a.partitions(); ++p)
-    out.write(reinterpret_cast<const char *>(bytes.data() + p * rowBytes(a.arena) + a.byte),
-              a.rowBytes());
-  if (!out)
-    fail("cannot write " + path);
 }
 
 } // namespace nki

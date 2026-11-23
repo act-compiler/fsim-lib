@@ -11,11 +11,13 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 #ifdef FSIM_VARIANT_OVERLAP
 #include <condition_variable>
 #include <deque>
@@ -80,11 +82,11 @@ std::string seconds(std::optional<double> ms) {
 }
 
 #ifdef FSIM_COMPILER_CUSTOM
-// Runs the pass stage; the text becomes its artifact.
-void passes(std::string &text) {
+// Runs the pass stage at batch_size; the text becomes its artifact.
+void passes(std::string &text, uint32_t batch_size) {
   char *out = nullptr;
   size_t size = 0;
-  int failed = fsim_passes_run(text.data(), text.size(), &out, &size);
+  int failed = fsim_passes_run(text.data(), text.size(), batch_size, &out, &size);
   std::string result(out, size);
   fsim_passes_free(out);
   if (failed)
@@ -101,6 +103,8 @@ struct Pipeline::Impl {
   std::vector<PJRT_Buffer *> buffers;
   const std::string options = compile_options();
   const uint32_t trigger;
+  const size_t batch_size;                  // B, each state tensor's leading dim above 1
+  std::vector<std::vector<int64_t>> shapes; // each state tensor's device dims
 
   // The run's clock and marks, on the caller's thread.
   Clock::time_point begin = Clock::now();
@@ -125,7 +129,7 @@ struct Pipeline::Impl {
   std::thread executor;
 #endif
 
-  Impl(const Runtime::Impl &rt, std::vector<Tensor> state);
+  Impl(const Runtime::Impl &rt, std::vector<Tensor> state, uint32_t batch_size);
   ~Impl();
 
   // Uploads the state and starts the threads; ~Impl undoes a throw.
@@ -146,21 +150,30 @@ struct Pipeline::Impl {
   void execute(PJRT_LoadedExecutable *executable);
 };
 
-Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state)
-    : rt(rt), state(std::move(state)), trigger(knobs.trigger.value_or(10000)) {
+Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, uint32_t batch_size)
+    : rt(rt), state(std::move(state)), trigger(knobs.trigger.value_or(10000)),
+      batch_size(batch_size) {
+  // A state tensor's device dims: B in front above a batch size of 1.
+  shapes.reserve(this->state.size());
+  for (const Tensor &tensor : this->state) {
+    std::vector<int64_t> &shape = shapes.emplace_back();
+    if (batch_size > 1)
+      shape.push_back(static_cast<int64_t>(batch_size));
+    shape.insert(shape.end(), tensor.dims.begin(), tensor.dims.end());
+  }
 }
 
 void Pipeline::Impl::start() {
   // One device buffer per state tensor.
   buffers.reserve(state.size());
-  for (const Tensor &tensor : state) {
+  for (size_t i = 0; i < state.size(); ++i) {
     PJRT_Client_BufferFromHostBuffer_Args args{};
     args.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;
     args.client = rt.client;
-    args.data = tensor.data;
-    args.type = buffer_type(tensor.type);
-    args.dims = tensor.dims.data();
-    args.num_dims = tensor.dims.size();
+    args.data = state[i].data;
+    args.type = buffer_type(state[i].type);
+    args.dims = shapes[i].data();
+    args.num_dims = shapes[i].size();
     args.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableOnlyDuringCall;
     args.device = rt.device;
     rt.check(rt.api->PJRT_Client_BufferFromHostBuffer(&args), "PJRT_Client_BufferFromHostBuffer");
@@ -297,7 +310,7 @@ void Pipeline::Impl::run(std::string text, ModuleStats &stats) {
 // Compiles the text, then checks its results against the state.
 PJRT_LoadedExecutable *Pipeline::Impl::compile(std::string text) const {
 #ifdef FSIM_COMPILER_CUSTOM
-  passes(text);
+  passes(text, batch_size);
 #endif
   PJRT_Program program{};
   program.struct_size = PJRT_Program_STRUCT_SIZE;
@@ -321,7 +334,7 @@ PJRT_LoadedExecutable *Pipeline::Impl::compile(std::string text) const {
   return args.executable;
 }
 
-// The module must return exactly the state: count, types and dims.
+// The module must return exactly the state: count, types and device dims.
 void Pipeline::Impl::check_outputs(PJRT_LoadedExecutable *loaded) const {
   PJRT_LoadedExecutable_GetExecutable_Args get{};
   get.struct_size = PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE;
@@ -345,15 +358,15 @@ void Pipeline::Impl::check_outputs(PJRT_LoadedExecutable *loaded) const {
     rt.check(rt.api->PJRT_Executable_OutputDimensions(&dims), "PJRT_Executable_OutputDimensions");
     const int64_t *result_dims = dims.dims;
     for (size_t i = 0; i < state.size(); ++i) {
-      const Tensor &tensor = state[i];
-      PJRT_Buffer_Type type = buffer_type(tensor.type);
-      bool same = types.output_types[i] == type && dims.dim_sizes[i] == tensor.dims.size() &&
-                  std::equal(tensor.dims.begin(), tensor.dims.end(), result_dims);
+      const std::vector<int64_t> &shape = shapes[i];
+      PJRT_Buffer_Type type = buffer_type(state[i].type);
+      bool same = types.output_types[i] == type && dims.dim_sizes[i] == shape.size() &&
+                  std::equal(shape.begin(), shape.end(), result_dims);
       if (!same)
         throw std::runtime_error("fsim: module result " + std::to_string(i) + " is " +
                                  signature(types.output_types[i], result_dims, dims.dim_sizes[i]) +
                                  ", state tensor " + std::to_string(i) + " is " +
-                                 signature(type, tensor.dims.data(), tensor.dims.size()));
+                                 signature(type, shape.data(), shape.size()));
       result_dims += dims.dim_sizes[i];
     }
   } catch (...) {
@@ -403,12 +416,18 @@ int Knobs::parse(int argc, char **argv) {
       knobs.trigger = count(arg, argv[++i]);
     else if (arg == "--overlap")
       knobs.threads = count(arg, argv[++i]);
+    else if (arg == "--num-samples")
+      knobs.num_samples = count(arg, argv[++i]);
     else
       argv[kept++] = argv[i];
   }
   argv[kept] = nullptr;
 
   // Refuses a knob this build lacks.
+#ifndef FSIM_COMPILER_CUSTOM
+  if (knobs.num_samples > 1u)
+    refuse("this build has no vmap pass");
+#endif
 #if defined(FSIM_VARIANT_EAGER) || defined(FSIM_VARIANT_TAIDL)
   if (knobs.trigger)
     refuse("this build has no soft trigger");
@@ -419,12 +438,48 @@ int Knobs::parse(int argc, char **argv) {
 #endif
   if (knobs.threads == 0u)
     refuse("--overlap needs at least one compile thread");
+  if (knobs.num_samples == 0u)
+    refuse("--num-samples needs at least one sample");
   return kept;
 }
 
-Pipeline::Pipeline(Runtime &runtime, std::vector<Tensor> state)
-    : impl_(std::make_unique<Impl>(*runtime.impl_, std::move(state))) {
+Pipeline::Pipeline(Runtime &runtime, std::vector<Tensor> state, uint32_t batch_size)
+    : impl_(std::make_unique<Impl>(*runtime.impl_, std::move(state), batch_size)) {
   impl_->start();
+}
+
+uint32_t Pipeline::batch_size(const Runtime &runtime, const std::vector<Tensor> &state) {
+  // The CPU caps B at 16; the limits count above one sample only.
+  uint32_t samples = knobs.num_samples.value_or(1);
+#ifdef FSIM_DEVICE_CPU
+  uint32_t size = std::min(samples, 16u);
+#else
+  uint32_t size = samples;
+#endif
+  if (samples == 1)
+    return size;
+  // A batch fits when the host holds its state three times and the device twice.
+  size_t bytes = 0;
+  for (const Tensor &t : state)
+    bytes += byte_size(t);
+  int64_t host = Runtime::Impl::host_limit();
+  int64_t device = runtime.impl_->bytes_limit();
+  auto fits = [&](uint64_t n) { return 3.0 * n * bytes <= host && 2.0 * n * bytes <= device; };
+  if (fits(size))
+    return size;
+  if (!fits(1))
+    throw std::runtime_error("fsim: one sample's " + std::to_string(bytes) +
+                             " state bytes must fit 3 times in the host's " + std::to_string(host) +
+                             " bytes and 2 times in the device's " + std::to_string(device));
+  // Past either limit, the largest fitting power of two.
+  uint32_t power = 1;
+  while (fits(2 * uint64_t{power}))
+    power *= 2;
+  return power;
+}
+
+uint32_t Pipeline::num_samples() {
+  return knobs.num_samples.value_or(1);
 }
 
 Pipeline::~Pipeline() = default;
@@ -480,18 +535,27 @@ void Pipeline::sync() {
       std::rethrow_exception(impl_->error);
   }
 
-  // Nothing executes: copy every state buffer to its host memory.
+  // A mid-trace sync runs at a batch size of 1 only.
+  if (impl_->batch_size > 1 && !impl_->trace_length)
+    throw std::runtime_error("fsim: a sync before end_trace at a batch size of " +
+                             std::to_string(impl_->batch_size));
+  // Nothing executes: copy every state buffer to host, each sample to its own part.
   const Runtime::Impl &rt = impl_->rt;
   for (size_t i = 0; i < impl_->buffers.size(); ++i) {
     PJRT_Buffer_ToHostBuffer_Args args{};
     args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
     args.src = impl_->buffers[i];
     args.dst = impl_->state[i].data;
-    args.dst_size = byte_size(impl_->state[i]);
+    args.dst_size = impl_->batch_size * byte_size(impl_->state[i]);
     rt.check(rt.api->PJRT_Buffer_ToHostBuffer(&args), "PJRT_Buffer_ToHostBuffer");
     rt.await(args.event);
   }
   impl_->settled = true;
+}
+
+void Pipeline::exclude(double ms) {
+  impl_->begin +=
+      std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
 }
 
 Stats Pipeline::stats() const {

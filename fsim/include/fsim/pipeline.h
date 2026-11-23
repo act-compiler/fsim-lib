@@ -4,6 +4,8 @@
 // Modules execute strictly in submission order.
 // sync() waits, then copies the state back to host memory; one caller thread drives a pipeline.
 // Outside the overlap variant, submit() compiles and executes in place before it returns.
+// N samples run in batches of batch_size()'s B; above 1, each state tensor is [B, dims].
+// Each sample of a batch starts from its own part of host memory, and sync() hands it back.
 #pragma once
 
 #include <cstddef>
@@ -43,10 +45,11 @@ struct Stats {
 
 // Run-time knobs; an unset one takes the library's default.
 struct Knobs {
-  std::optional<uint32_t> trigger; // soft trigger op count, default 10000
-  std::optional<uint32_t> threads; // compile thread count, default 4
+  std::optional<uint32_t> trigger;     // soft trigger op count, default 10000
+  std::optional<uint32_t> threads;     // compile thread count, default 4
+  std::optional<uint32_t> num_samples; // samples per run, default 1
 
-  // Consumes --trigger N and --overlap T from argv and keeps them for every
+  // Consumes --trigger N, --overlap T and --num-samples N from argv and keeps them for every
   // pipeline; returns the new argc. A bad value, or a knob this build lacks,
   // prints the refusal and exits 1.
   static int parse(int argc, char **argv);
@@ -54,8 +57,9 @@ struct Knobs {
 
 class Pipeline {
 public:
-  // Uploads the state; runtime and host memory must outlive the pipeline.
-  Pipeline(Runtime &runtime, std::vector<Tensor> state);
+  // Uploads the state of a batch of batch_size samples; runtime and host memory outlive it.
+  // Each tensor's host memory holds the batch's samples back to back.
+  Pipeline(Runtime &runtime, std::vector<Tensor> state, uint32_t batch_size);
   // Stops the threads; modules not yet run are dropped.
   ~Pipeline();
   Pipeline(const Pipeline &) = delete;
@@ -66,6 +70,7 @@ public:
   // Queues one module's text; throws the pipeline's error if it has one.
   void submit(std::string module);
   // Runs everything submitted, copies the state to host, rethrows the first error.
+  // Above a batch size of 1, one before end_trace throws.
   void sync();
   // A snapshot of the stats; complete after sync().
   Stats stats() const;
@@ -76,6 +81,15 @@ public:
   void end_trace(size_t trace_length);
   // Prints the run's summary line so far, '-' for a value not yet known.
   void summary(std::ostream &out) const;
+
+  // The run: N samples in batches of B.
+  // N, the --num-samples sample count.
+  static uint32_t num_samples();
+  // B, the batch size for --num-samples N and one sample's state.
+  // Throws when one sample passes the host's or the device's limit.
+  static uint32_t batch_size(const Runtime &runtime, const std::vector<Tensor> &state);
+  // Leaves ms of a driver's loads and stores out of the run's clock.
+  void exclude(double ms);
 
 private:
   struct Impl;

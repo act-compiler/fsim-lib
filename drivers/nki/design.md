@@ -15,7 +15,7 @@ Paths here are relative to the repo root.
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
 ./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
-./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [<trace>|-]"
+./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
 
@@ -43,7 +43,12 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
 - A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace; the runner always passes the file.
 - It loads `<inputs>/<name>.bin` for each input allocation and writes `<outputs>/<name>.bin` for each output.
-- `--trigger` and `--overlap` are the library's knobs.
+- Loading a sample zeroes its state, then reads each input's tensor.
+- Samples run together in batches of the library's batch size `B`, which `fsim/README.md` defines.
+- The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
+- A `--num-samples` past one batch of `B` samples is refused.
+- `<outputs>/<name>.bin` holds the output of every simulated sample in order.
+- `--trigger`, `--overlap` and `--num-samples` are the library's knobs.
 - An undecoded instruction kind, a bad record or a refused view fails the run loudly.
 
 A run's evaluation log is fsim's summary line, here an `rmsnorm_tkg` case's under `overlap`:
@@ -53,7 +58,7 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 ```
 
 - [fsim/README.md](../../fsim/README.md) defines its fields.
-- The run's clock starts after the state's upload, at the first instruction, so it leaves out the header, the allocations and the input loads.
+- The run's clock starts after the state's upload, at the first instruction, and leaves out the header, the allocations and every input load and output store.
 - The trace ends at `end`, with `trace` the instructions run.
 - The line prints at `end`, so a run killed in the final sync keeps it, and again after the outputs are written.
 - `bench.sh run` reads the last line into its status line.
@@ -193,7 +198,7 @@ Four records are reserved in the format, so a rolled loop or a register loop is 
 
 ### End of kernel
 
-`output out %2` names a returned tensor; `fsim-nki` writes its bytes to `<outputs>/out.bin` after the final sync.
+`output out %2` names a returned tensor; `fsim-nki` writes each sample's bytes to `<outputs>/out.bin` after its batch's sync.
 `end` is the last line; a stream without it is an error.
 
 ### Example
@@ -226,33 +231,38 @@ end
 The driver is a pipeline: `Parser` parses each line into a record, and `Driver` runs it over an `Accelerator` as it arrives.
 Decode is one free function per instruction kind, which the decode table in `src/isa/Instruction.cpp` dispatches by the kind's name.
 Each decode builds an `Instruction` whose `semantics(Accelerator&, Module&)` emits its StableHLO into a `Module`.
-`Driver` owns fsim's `Runtime` and `Pipeline`, and runs the modules through them.
+`main.cpp` owns the `Driver` and the `BatchLoop`, the `BatchLoop` owns fsim's `Runtime` and `Pipeline`, and the `Driver` runs the modules through it.
+The `BatchLoop` calls the `Driver`, never the reverse: `Driver::trace` takes its input and upload callbacks.
 Parsing, accelerator state, code generation and instruction semantics each stay in one layer, and each layer includes only those before it:
 
 1. `src/trace/`
 2. `src/accelerator/` and `src/stablehlo/`, each over `trace/` alone
 3. `src/isa/`
-4. `src/Driver.{h,cpp}` and `src/main.cpp`
+4. `src/Driver.{h,cpp}`
+5. `src/samples/` and `src/main.cpp`
 
-| path                                  | role                                                                                                                    |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement            |
-| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                                    |
-| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                       |
-| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                          |
-| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken              |
-| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                              |
-| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                             |
-| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
-| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
-| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                      |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                          |
-| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
-| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
-| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
-| `src/Driver.{h,cpp}`                  | `Driver`: `run()` over a file or stdin; `resolve`; upload, soft trigger, submit, sync, read-back and the evaluation log |
-| `src/main.cpp`                        | the `fsim-nki` command line                                                                                             |
-| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                            |
+| path                                  | role                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `record/backend.py`                   | the backend `nki._backends._activate_backend` installs: tensor builtins to records, allocations to placement       |
+| `record/place.py`                     | the per-arena first-fit placement for allocations without an address                                               |
+| `record/record.py`                    | `record(build, out)`: runs the kernel under the backend and writes the stream to a file or a pipe                  |
+| `src/trace/View.h`                    | `View`, one operand, and `Dyn`, its `+s(...)` offset; `Arena`, `Dtype` and a pattern's `Entry`                     |
+| `src/trace/Fields.h`                  | `Fields`: an instruction record's values, which its decode takes by name and `done()` checks are all taken         |
+| `src/trace/Kernel.{h,cpp}`            | `Kernel`: the header and the outputs; `Alloc` and `Output`                                                         |
+| `src/trace/Parser.{h,cpp}`            | one line to one record: tokenizer, view and pattern parser; it refuses the reserved records                        |
+| `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`          |
+| `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                   |
+| `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                 |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                     |
+| `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the batch's host copies of the arenas and registers, the allocation table, the PSUM written mask    |
+| `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank         |
+| `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text |
+| `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                    |
+| `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                          |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`                                                                  |
+| `src/main.cpp`                        | the `fsim-nki` command line                                                                                        |
+| `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                       |
 
 ## From a record to StableHLO
 
@@ -294,7 +304,7 @@ It lowers to the ops the [StableHLO spec](https://openxla.org/stablehlo/spec) de
 
 Control and state:
 
-- `Driver::run` asks `Pipeline::soft_trigger` for the module's op count before each instruction.
+- `Driver::execute` asks `Pipeline::soft_trigger` for the module's op count before each instruction.
 - When it fires, `Module::text` ends the module and the driver submits its text, and the module starts afresh.
 - Under `overlap`, submitted modules compile on the library's threads while the driver keeps decoding.
 - `Driver::resolve` resolves each view's `+s(...)` offset before the instruction's decode and semantics.
@@ -315,7 +325,7 @@ Control and state:
 - `activation` refuses a `reduce_op` other than `add` with `reduce` or `reset_reduce`, since the ISA reduces by add only ([nki.isa.activation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.activation.html)).
 - The suite reaches `reduce_cmd=reset_reduce` with a `reduce_res` in `activation` and `tensor_scalar_reduce`, through attention_cte and qkv_cte.
 - Each instruction runs as its record arrives, and `instructionCounter_` counts them for the summary's `trace`.
-- After `end`, the driver ends the trace and prints the summary, then submits, syncs, writes the outputs and prints it again.
+- After `end`, the driver ends the trace, prints the summary and submits; its batch loop syncs and stores the outputs.
 
 ## Memory and dtypes
 
@@ -463,7 +473,6 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 - Execution is one program order, as in nki's simulator: no engines, semaphores or scheduling, so no race is modelled.
 - Inputs are `shared_hbm`, as a compiled kernel sees them; this is what lets all_expert record.
 - A kernel that converts a register to a Python value cannot be recorded; the backend raises, as nki's compiler frontend does.
-- Batching over input sets is a later `fsim-nki` flag.
 
 ## References
 

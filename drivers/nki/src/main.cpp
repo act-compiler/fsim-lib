@@ -1,19 +1,19 @@
-// fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T]
-// [--validate] [<trace>|-]: simulates one trace, a file or stdin.
+// fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T] [--num-samples N]
+// [--validate] [<trace>|-]: simulates one trace, a file or stdin, over N samples.
 // --validate parses and checks it only, and takes no directories.
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 
 #include "Driver.h"
 #include "fsim/pipeline.h"
+#include "samples/BatchLoop.h"
 
 namespace {
 
 int usage() {
   std::cerr << "usage: fsim-nki [--inputs DIR] [--outputs DIR] [--trigger N] [--overlap T] "
-               "[--validate] [<trace>|-]\n";
+               "[--num-samples N] [--validate] [<trace>|-]\n";
   return 1;
 }
 
@@ -46,14 +46,13 @@ int main(int argc, char **argv) {
   try {
     if (!validate)
       std::filesystem::create_directories(outputs);
-    nki::Driver driver(inputs, outputs, validate);
-    if (trace == "-") {
-      driver.run(std::cin);
+    nki::Driver driver(trace);
+    if (validate) {
+      driver.validate();
     } else {
-      std::ifstream in(trace);
-      if (!in)
-        throw std::runtime_error("cannot read " + trace);
-      driver.run(in);
+      // The loop is destroyed before the driver, whose host copies its pipeline holds.
+      nki::BatchLoop loop(driver, inputs, outputs);
+      loop.run();
     }
   } catch (const std::exception &e) {
     std::cerr << "fsim-nki: " << e.what() << "\n";

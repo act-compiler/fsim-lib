@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -46,7 +47,7 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   init.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
   impl_->check(api->PJRT_Plugin_Initialize(&init), "PJRT_Plugin_Initialize");
 
-  // One client: the cpu plugin's over one device, the gpu plugin's on its defaults.
+  // One client: cpu over one device, custom-gpu at 95% of total memory, else defaults.
   PJRT_Client_Create_Args create{};
   create.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
 #ifdef FSIM_DEVICE_CPU
@@ -58,6 +59,18 @@ Runtime::Runtime() : impl_(std::make_unique<Impl>()) {
   devices.int64_value = 1;
   devices.value_size = 1;
   create.create_options = &devices;
+  create.num_options = 1;
+#endif
+#if defined(FSIM_COMPILER_CUSTOM) && defined(FSIM_DEVICE_GPU)
+  // The allocator's limit is 95% of total GPU memory.
+  PJRT_NamedValue fraction{};
+  fraction.struct_size = PJRT_NamedValue_STRUCT_SIZE;
+  fraction.name = "memory_fraction";
+  fraction.name_size = std::strlen(fraction.name);
+  fraction.type = PJRT_NamedValue_kFloat;
+  fraction.float_value = 0.95f;
+  fraction.value_size = 1;
+  create.create_options = &fraction;
   create.num_options = 1;
 #endif
   impl_->check(api->PJRT_Client_Create(&create), "PJRT_Client_Create");
@@ -119,6 +132,30 @@ void Runtime::Impl::await(PJRT_Event *event) const {
   }
   check(error, "PJRT_Event_Await");
   check(destroy_error, "PJRT_Event_Destroy");
+}
+
+int64_t Runtime::Impl::host_limit() {
+  // MemAvailable is in kB.
+  std::ifstream meminfo("/proc/meminfo");
+  for (std::string line; std::getline(meminfo, line);)
+    if (line.rfind("MemAvailable:", 0) == 0)
+      return std::stoll(line.substr(13)) * 1024;
+  throw std::runtime_error("fsim: no MemAvailable in /proc/meminfo");
+}
+
+int64_t Runtime::Impl::bytes_limit() const {
+#ifdef FSIM_DEVICE_CPU
+  // The CPU device's memory: available host memory.
+  return host_limit();
+#else
+  PJRT_Device_MemoryStats_Args args{};
+  args.struct_size = PJRT_Device_MemoryStats_Args_STRUCT_SIZE;
+  args.device = device;
+  check(api->PJRT_Device_MemoryStats(&args), "PJRT_Device_MemoryStats");
+  if (!args.bytes_limit_is_set)
+    throw std::runtime_error("fsim: the device reports no byte limit");
+  return args.bytes_limit;
+#endif
 }
 
 void Runtime::Impl::destroy(PJRT_Buffer *buffer) const {
