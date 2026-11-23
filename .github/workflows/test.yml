@@ -36,6 +36,7 @@ jobs:
           --bench nkilib/mlp_tkg/llama3_8b_tp4_batch1
           --bench nkilib/mlp_cte/llama3_8b_tp4_seq512
           --bench nkilib/qkv_cte/llama3_8b_tp4_seq512
+          --bench nkilib/cumsum
           --bench xfail
           --bench matmul
 
@@ -53,5 +54,6 @@ jobs:
           --bench nkilib/mlp_tkg/llama3_8b_tp4_batch1
           --bench nkilib/mlp_cte/llama3_8b_tp4_seq512
           --bench nkilib/qkv_cte/llama3_8b_tp4_seq512
+          --bench nkilib/cumsum
           --bench xfail
           --bench matmul

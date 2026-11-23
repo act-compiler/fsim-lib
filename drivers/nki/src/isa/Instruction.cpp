@@ -19,6 +19,7 @@ Decode decoder(const std::string &kind) {
       {"reciprocal", decodeReciprocal},
       {"tensor_copy", decodeTensorCopy},
       {"tensor_scalar_arith", decodeTensorScalarArith},
+      {"tensor_tensor_scan", decodeTensorTensorScan},
   };
   auto it = kinds.find(kind);
   if (it != kinds.end())

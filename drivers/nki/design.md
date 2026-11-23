@@ -360,6 +360,9 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - `dma_transpose` writes `src` permuted by `axes` to `dst` ([nki.isa.dma_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.dma_transpose.html)), in flat order as nki.simulate's `np.transpose` does.
 - It does not check the docs' limits on `src.shape[0]`, which the suite's tiles exceed; nki.simulate does not check them either.
 - `reciprocal` computes `1.0 / data` in f32 and casts to `dst`'s dtype ([nki.isa.reciprocal](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.reciprocal.html)), writing in flat order as nki.simulate does.
+- `tensor_tensor_scan` computes `r[i] = op1(op0(data0[i], r[i-1]), data1[i])` along the free dim per partition, from `initial`, in f32 ([nki.isa.tensor_tensor_scan](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_tensor_scan.html)).
+- For multiply then add, it composes the maps `r -> data0[i] * r + data1[i]` in a Hillis-Steele scan, so its sums run in a tree order, not nki.simulate's loop order.
+- The scan forms prefix products of `data0` before `initial` enters, so a product past f32's range gives a result the loop does not.
 
 ## Coverage
 
@@ -375,6 +378,7 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert               |
 | `nc_matmul`           | all but rope and cumsum                                 |
 | `tensor_copy`         | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
+| `tensor_tensor_scan`  | cumsum                                                  |
 | `tensor_scalar_arith` | qkv_cte, attention, moe                                 |
 | `affine_select`       | qkv_cte, mlp, attention, moe                            |
 | `dma_transpose`       | attention_cte                                           |
@@ -404,6 +408,8 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `dma_transpose` `axes`                     | [1, 0], [2, 1, 0], [3, 1, 2, 0], as documented; the suite reaches the last           |
 | `dma_transpose` `src`, `dst`               | equal 2-byte dtypes, `src` in hbm or sbuf, `dst` in sbuf; the suite uses bf16        |
 | `reciprocal` `data` to `dst` dtype         | any pair, through f32; the suite reaches f32 to f32                                  |
+| `tensor_tensor_scan` `op0`, `op1`          | multiply then add, with `reverse0` and `reverse1` false                              |
+| `tensor_tensor_scan` `initial`             | a view, a scalar refused; the suite reaches an sbuf f32 `[128, 1]`                   |
 
 ## Scope and limits
 
