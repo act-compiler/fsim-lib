@@ -139,7 +139,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - It refuses a view whose partition stride is not a whole number of partitions.
 - `+s(<view>)*<k>` adds the index the inner view reads, times `k` elements, at run time.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
-- An index view is a single `i32`; a multi-element `+s(...)` view is refused.
+- An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
 - The recorder refuses a `+s(...)` offset on an SBUF or PSUM partition dimension.
 - `dtype` is one of `bf16`, `f16`, `f32`, `i32`, `u8`, `u16`, `u32`.
@@ -227,7 +227,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after its record kind                      |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`                                      |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `selectView`, `applyOperand`, `compares`                          |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
@@ -369,6 +369,9 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - `stream_transpose` is the record kind of [nki.isa.nc_transpose](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.nc_transpose.html) on the Vector Engine.
 - It writes `data` as `[P, free]` transposed to `dst` in flat order, as nki.simulate does.
 - It refuses a `data` past 32x32, the Vector Engine bound of nki.isa.nc_transpose.
+- `local_gather` gives each 16-partition GpSimd core's `dst` column `j` the `src_buffer` column of the core's `j`-th `index` entry, as nki.simulate does.
+- The core's rows of `index` flatten partition-first, and the gather runs on the device, with no sync.
+- It clips an `index` entry to the row's last column, as nki.simulate does; the 2.32 docs leave an out-of-range entry undefined.
 
 ## Coverage
 
@@ -392,6 +395,7 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `select_reduce`       | attention_tkg                                           |
 | `nc_stream_shuffle`   | attention_tkg, moe                                      |
 | `stream_transpose`    | attention_tkg, moe selective                            |
+| `local_gather`        | moe selective                                           |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
@@ -401,7 +405,8 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal      |
 | `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum                  |
 | `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power         |
-| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                            |
+| `tensor_tensor_arith` `op`, compare        | the six `affine_select` compares, 1.0 or 0.0 in f32; the suite reaches equal         |
+| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum; compares refused                          |
 | `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                                      |
 | `nc_matmul` `perf_mode`                    | none                                                                                 |
 | `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                       |
@@ -426,6 +431,11 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `nc_stream_shuffle` `src`, `dst`           | one dtype, per partition alike, at lowering; the suite reaches f32, bf16, u32        |
 | `stream_transpose` `engine`                | vector, as nki.simulate requires                                                     |
 | `stream_transpose` `data` to `dst` dtype   | equal at lowering; the suite reaches f32 `[32, 1]` and `[8, 1]`, u16 `[16, 16]`      |
+| `local_gather` `num_elem_per_idx`          | 1                                                                                    |
+| `local_gather` `num_valid_indices`         | `dst`'s elements per partition; the suite reaches 256                                |
+| `local_gather` `index`                     | u16, others refused; the suite reaches sbuf `[128, 16]`                              |
+| `local_gather` `index` shape               | `dst`'s partitions; per partition, at least a sixteenth of `dst`'s elements          |
+| `local_gather` `src_buffer`, `dst`         | one dtype at lowering, partitions in whole GpSimd cores; the suite reaches f32       |
 
 ## Scope and limits
 

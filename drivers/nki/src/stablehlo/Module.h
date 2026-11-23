@@ -76,6 +76,8 @@ public:
   int update(int operand, int tile, const std::vector<int64_t> &start);
   int transpose(int value, std::vector<int64_t> permutation);
   int gather(int flat, const std::vector<int64_t> &indices);
+  // Gathers flat at an i32[n, 1] tensor of indices.
+  int gather(int flat, int indices);
   int scatter(int flat, const std::vector<int64_t> &indices, int updates);
 
   // Element ops.

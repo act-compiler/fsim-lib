@@ -3,6 +3,7 @@
 
 #include "accelerator/Accelerator.h"
 #include "isa/Instruction.h"
+#include "isa/Shared.h"
 #include "stablehlo/Module.h"
 
 namespace nki {
@@ -15,7 +16,7 @@ std::string op(Fields &f, bool native) {
   static const std::set<std::string> integer = {"add", "subtract", "multiply", "maximum",
                                                 "minimum"};
   std::string name = f.word("op");
-  if (!ops.count(name))
+  if (!ops.count(name) && !compares().count(name))
     f.fail("op", "'" + name + "' is not decoded");
   if (native && !integer.count(name))
     f.fail("op", "'" + name + "' on integers on gpsimd is not decoded");
@@ -42,7 +43,12 @@ public:
     if (module.shape(a) != module.shape(b) && module.type(a).count() == module.type(b).count())
       b = module.reshape(b, module.shape(a));
     auto [lhs, rhs] = module.broadcastPair(a, b);
-    int result = module.binary(op_, lhs, rhs);
+    auto compare = compares().find(op_);
+    int result =
+        compare == compares().end()
+            ? module.binary(op_, lhs, rhs)
+            : module.select(module.compare(compare->second, lhs, rhs),
+                            module.f32(1, module.shape(lhs)), module.f32(0, module.shape(lhs)));
     // A larger result keeps its first elements, in flat order.
     int64_t n = module.type(result).count();
     if (n > dst_.count())
