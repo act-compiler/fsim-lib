@@ -25,6 +25,7 @@ add_executable(fsim-nki
   src/isa/TensorCopy.cpp
   src/isa/TensorReduce.cpp
   src/isa/TensorScalar.cpp
+  src/isa/TensorScalarReduce.cpp
   src/isa/TensorTensor.cpp
   src/isa/TensorTensorScan.cpp
   src/samples/BatchLoop.cpp

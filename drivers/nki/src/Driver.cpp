@@ -52,6 +52,7 @@ std::vector<fsim::Tensor> Driver::state() {
       {ElementType::ui8, {kPartitions, kSbufRow}, a.sbuf.data()},
       {ElementType::ui8, {kPartitions, kPsumRow}, a.psum.data()},
       {ElementType::f32, {kPartitions, 1}, a.reduceRegs.data()},
+      {ElementType::f32, {kPartitions, 1}, a.accumulatorRegs.data()},
   };
 }
 

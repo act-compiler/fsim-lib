@@ -1,4 +1,4 @@
-// The Accelerator: the arenas' host copies, the reduce registers,
+// The Accelerator: the arenas' host copies, the reduce and accumulator registers,
 // the allocation table and the PSUM written mask.
 // Host copies are the pipeline's state after a sync, each holding the batch's samples back to back.
 // Host reads during a trace address batch index 0, the first.
@@ -49,7 +49,8 @@ public:
   void unclobbered(const View &view) const;
 
   std::vector<uint8_t> hbm, sbuf, psum;
-  std::vector<float> reduceRegs; // f32[128, 1] per sample
+  std::vector<float> reduceRegs;      // f32[128, 1] per sample
+  std::vector<float> accumulatorRegs; // f32[128, 1] per sample, the Vector Engine's
   std::map<int64_t, Alloc> allocs;
   // A span of PSUM bytes to end, last written by alloc.
   struct Owner {

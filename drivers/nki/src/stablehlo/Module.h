@@ -30,11 +30,11 @@ inline const char *mlir(Dtype dtype) {
 }
 
 // The state parameters, in @main's order; arenas first.
-enum class Slot { hbm, sbuf, psum, reduceRegs };
+enum class Slot { hbm, sbuf, psum, reduceRegs, accumulatorRegs };
 
 class Module {
 public:
-  // The arenas are ui8[P, R]; reduce registers f32[P, 1].
+  // The arenas are ui8[P, R]; the registers f32[P, 1].
   explicit Module(std::vector<Type> state);
 
   // Values in the module, the parameters counted.
@@ -49,7 +49,7 @@ public:
   int read(const View &view);
   // Writes the view's dtype and count, in flat order.
   void write(const View &view, int value);
-  // Reduce register lanes [first, first + count), f32[count, 1].
+  // A slot's register lanes [first, first + count), f32[count, 1].
   int readLanes(Slot slot, int64_t first, int64_t count);
   void writeLanes(Slot slot, int64_t first, int value);
 

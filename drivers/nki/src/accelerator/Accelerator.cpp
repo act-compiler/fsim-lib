@@ -55,6 +55,7 @@ void Accelerator::hold(uint32_t batchSize) {
   sbuf.assign(batchSize * kPartitions * kSbufRow, 0);
   psum.assign(batchSize * kPartitions * kPsumRow, 0);
   reduceRegs.assign(batchSize * kPartitions, 0.0f);
+  accumulatorRegs.assign(batchSize * kPartitions, 0.0f);
 }
 
 int64_t Accelerator::rowBytes(Arena arena) const {
@@ -101,6 +102,7 @@ void Accelerator::zero(uint32_t batchIndex) {
   zero(sbuf, kPartitions * kSbufRow);
   zero(psum, kPartitions * kPsumRow);
   zero(reduceRegs, kPartitions);
+  zero(accumulatorRegs, kPartitions);
 }
 
 void Accelerator::check(const View &v) const {
