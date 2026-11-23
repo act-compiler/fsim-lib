@@ -227,6 +227,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after the public nki.isa instruction       |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`                                                                    |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
@@ -341,6 +342,11 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
 - `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.
+- `tensor_copy` is a bit copy when `src` and `dst` share a dtype, and casts through f32 otherwise, on every engine, as nki.simulate does.
+- The [nki.isa.tensor_copy](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_copy.html) docs give the bit copy only on GpSimd and Vector, and send Scalar through f32 every time.
+- That f32 convert is lossless for bf16 and f32, apart from NaN payloads.
+- It writes in flat order, as nki.simulate does, so `[128,1,64]` takes `[128,64]`.
+- The docs bar GpSimd from PSUM; nki.simulate ignores `engine`, and so does the driver.
 - A write through a zero-stride view keeps, per element, the value last in flat order, as nki.simulate leaves it.
 - The suite reaches such a write in qkv_cte's `activation` into a scratch tile.
 
@@ -349,14 +355,15 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 The suite's thirteen kernels reach seventeen instruction kinds at trn2, each with one keyword set, no register load and no register loop.
 Of these, `fsim-nki` decodes the ones in the table.
 
-| kind                  | kernels                                   |
-| --------------------- | ----------------------------------------- |
-| `dma_copy`            | all                                       |
-| `memset`              | all but rope and output_proj              |
-| `activation`          | norms, qkv, mlp, attention, moe           |
-| `tensor_tensor_arith` | norms, rope, qkv_tkg, mlp, attention, moe |
-| `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert |
-| `nc_matmul`           | all but rope and cumsum                   |
+| kind                  | kernels                                                 |
+| --------------------- | ------------------------------------------------------- |
+| `dma_copy`            | all                                                     |
+| `memset`              | all but rope and output_proj                            |
+| `activation`          | norms, qkv, mlp, attention, moe                         |
+| `tensor_tensor_arith` | norms, rope, qkv_tkg, mlp, attention, moe               |
+| `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert               |
+| `nc_matmul`           | all but rope and cumsum                                 |
+| `tensor_copy`         | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode:
@@ -369,6 +376,8 @@ Within a decoded kind, `fsim-nki` decodes these values, and any other fails at d
 | `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                    |
 | `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                              |
 | `nc_matmul` `perf_mode`                    | none                                                                         |
+| `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                               |
+| `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16       |
 
 ## Scope and limits
 
