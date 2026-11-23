@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 
 namespace nki {
@@ -85,10 +86,28 @@ struct Geometry {
   int64_t e0 = 0;                 // the first element
   std::vector<Entry> kept;        // free dims past 1 that advance
   std::vector<int64_t> at;        // each kept dim's position in the shape
+  std::vector<int64_t> order;     // each sorted kept dim's index in view order, or none
   bool broadcast = false;         // a free dim of stride 0
   bool nested = false;            // the kept dims tile one window
   int64_t window = 1;             // the window's elements
 };
+
+// Nested: positive strides, each dividing the outer, disjoint, in the grid.
+bool nests(const Geometry &g, int64_t elements) {
+  if (g.ps <= 0)
+    return false;
+  for (size_t i = 0; i < g.kept.size(); ++i) {
+    const Entry &e = g.kept[i];
+    if (e.stride <= 0)
+      return false;
+    if (i + 1 < g.kept.size()) {
+      const Entry &in = g.kept[i + 1];
+      if (in.stride <= 0 || e.stride % in.stride != 0 || in.count * in.stride > e.stride)
+        return false;
+    }
+  }
+  return g.e0 + (g.kept.empty() ? 1 : g.kept[0].count * g.kept[0].stride) <= elements;
+}
 
 Geometry geometry(const View &v, int64_t elements) {
   Geometry g;
@@ -109,21 +128,22 @@ Geometry geometry(const View &v, int64_t elements) {
     g.kept.push_back(free[d]);
     g.at.push_back(static_cast<int64_t>(d) + 1);
   }
-  // Nested: positive strides, each dividing the outer, disjoint.
-  g.nested = g.ps > 0;
-  for (size_t i = 0; i < g.kept.size(); ++i) {
-    const Entry &e = g.kept[i];
-    if (e.stride <= 0)
-      g.nested = false;
-    else if (i + 1 < g.kept.size()) {
-      const Entry &in = g.kept[i + 1];
-      if (in.stride <= 0 || e.stride % in.stride != 0 || in.count * in.stride > e.stride)
-        g.nested = false;
+  g.nested = nests(g, elements);
+  // Else the kept dims by stride, outer first, when that nests them.
+  if (!g.nested) {
+    Geometry s = g;
+    s.order.resize(g.kept.size());
+    std::iota(s.order.begin(), s.order.end(), 0);
+    std::stable_sort(s.order.begin(), s.order.end(),
+                     [&](int64_t a, int64_t b) { return g.kept[a].stride > g.kept[b].stride; });
+    for (size_t i = 0; i < s.order.size(); ++i)
+      s.kept[i] = g.kept[s.order[i]];
+    if (nests(s, elements)) {
+      g = s;
+      g.nested = true;
     }
   }
   g.window = g.kept.empty() ? 1 : g.kept[0].count * g.kept[0].stride;
-  if (g.e0 + g.window > elements)
-    g.nested = false;
   return g;
 }
 
@@ -278,6 +298,13 @@ int Module::read(const View &v) {
   } else {
     out = reshape(gather(reshape(t, {d[0] * d[1]}), indices(g, d[1])), tile);
   }
+  // Sorted kept dims back to view order.
+  if (!g.order.empty()) {
+    std::vector<int64_t> perm(g.order.size() + 1, 0);
+    for (size_t i = 0; i < g.order.size(); ++i)
+      perm[g.order[i] + 1] = static_cast<int64_t>(i) + 1;
+    out = transpose(out, perm);
+  }
   // To the full shape: broadcasts expand, unit dims return.
   std::vector<int64_t> full = {v.partitions().count};
   for (const Entry &e : v.free())
@@ -294,11 +321,33 @@ void Module::write(const View &v, int value) {
   if (types_[value].count() != v.count() || types_[value].elem != mlir(v.dtype))
     fail("a write of " + types_[value].str() + " through a view of " + std::to_string(v.count()) +
          " " + mlir(v.dtype));
+  // A zero-stride entry keeps its last element in flat order, as nki.simulate leaves it.
+  View last = v;
+  std::vector<int64_t> start;
+  for (Entry &e : last.pattern) {
+    bool broadcast = e.stride == 0 && e.count > 1;
+    start.push_back(broadcast ? e.count - 1 : 0);
+    if (broadcast)
+      e.count = 1;
+  }
+  if (last.count() != v.count()) {
+    int kept =
+        slice(reshape(value, v.shape()), start, v.shape(), std::vector<int64_t>(start.size(), 1));
+    write(last, reshape(kept, last.shape()));
+    return;
+  }
   int t = bitcastTo(v.arena, v.dtype);
   std::vector<int64_t> d = types_[t].dims;
   Geometry g = geometry(v, d[1]);
-  if (g.spread || g.broadcast)
-    fail("a write through a broadcast view");
+  // The value's kept dims to sorted order.
+  if (!g.order.empty()) {
+    std::vector<int64_t> dims(g.kept.size() + 1, g.pc), perm = {0};
+    for (size_t i = 0; i < g.order.size(); ++i) {
+      dims[g.order[i] + 1] = g.kept[i].count;
+      perm.push_back(g.order[i] + 1);
+    }
+    value = transpose(reshape(value, dims), perm);
+  }
   if (g.nested && g.ps == 1) {
     int win;
     std::vector<int64_t> dims, limits;

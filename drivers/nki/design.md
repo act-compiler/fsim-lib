@@ -260,13 +260,15 @@ It lowers to the ops the [StableHLO spec](https://openxla.org/stablehlo/spec) de
 - A single-level pattern is one strided [slice](https://openxla.org/stablehlo/spec#slice) of the grid, its partitions and elements together.
 - A nested pattern, each stride a multiple of the next and the entries disjoint, is a slice of its window first.
 - The window is then delinearized into a reshape, one dimension per entry, as MLIR's [affine.delinearize_index](https://mlir.llvm.org/docs/Dialects/Affine/#affinedelinearize_index-affineaffinedelinearizeindexop) splits a flat index, and sliced to the counts.
+- A pattern that nests only with its entries sorted by stride, outer first, is read in that order and transposed back to the view's.
 - Any other pattern falls back to a gather with a constant index.
 - A zero stride becomes a broadcast back to the full shape.
 - The result is `[count_0, ..., count_n]` in the view's dtype.
 - compute: the ops the numpy simulator spells, over f32 converts of the operands.
 - `write`: a nested pattern at partition stride 1 is a dynamic_update_slice of the arena's window, after an update of the delinearized window when the pattern leaves gaps.
+- A pattern that nests only once sorted takes the value transposed into the sorted order first.
 - Any other pattern falls back to a scatter; either way the grid is bitcast back to bytes.
-- A write through a broadcast view is refused.
+- A write through a zero-stride view first slices the value to each zero-stride entry's last index, then writes the rest of the view.
 - The library's byte-grid pass keeps bytes as bytes below the bitcasts.
 - An f32 to integer convert is round-to-nearest-even, saturating, NaN to the maximum, as nki.simulate casts.
 
@@ -339,6 +341,8 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - Transcendentals are XLA's f32 ops, and the hardware engines may round differently, as the NKI simulator guide's [Numerical Precision](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/guides/nki_simulator.html#numerical-precision) section says of nki.simulate.
 - `reduce_cmd=reduce` and `reset_reduce` on `activation` reduce by add, the one `reduce_op` the ISA documents.
 - `reduce_cmd=load_reduce` on `activation` follows nki's simulator, which leaves the reduce registers unchanged; it is to be checked on the chip.
+- A write through a zero-stride view keeps, per element, the value last in flat order, as nki.simulate leaves it.
+- The suite reaches such a write in qkv_cte's `activation` into a scratch tile.
 
 ## Coverage
 
