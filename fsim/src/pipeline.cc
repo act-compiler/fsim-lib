@@ -103,17 +103,29 @@ struct Pipeline::Impl {
   std::vector<PJRT_Buffer *> buffers;
   const std::string options = compile_options();
   const uint32_t trigger;
+  const uint32_t num_samples;               // the --num-samples sample count N
   const size_t batch_size;                  // B, each state tensor's leading dim above 1
   std::vector<std::vector<int64_t>> shapes; // each state tensor's device dims
+
+  // Every executable run, in submission order, kept for replay.
+  std::vector<PJRT_LoadedExecutable *> executables;
 
   // The run's clock and marks, on the caller's thread.
   Clock::time_point begin = Clock::now();
   Clock::time_point trace_begin = begin; // the current trace's start
   std::optional<double> tracing_ms;      // summed over traces
   std::optional<size_t> trace_length;
-  bool synced = false;  // a sync() has run
-  bool settled = false; // the last sync() returned, no submit since
-  size_t first = 0;     // the current trace's first module
+  bool synced = false;    // a sync() has run
+  bool settled = false;   // the last sync() returned, no submit or replay since
+  bool mid_trace = false; // a sync before end_trace has run
+  size_t replays = 0;     // replays run
+  size_t retraces = 0;    // traces after the first
+  size_t first = 0;       // the current trace's first module
+
+  // Whether a replay can come: N above B, no mid-trace sync or next trace yet.
+  bool keeps() const {
+    return num_samples > batch_size && !mid_trace && !retraces;
+  }
 
   // Guarded by mutex.
   mutable std::mutex mutex;
@@ -138,6 +150,8 @@ struct Pipeline::Impl {
   void start();
   // Uploads the state's host memory, replacing the state buffers.
   void upload();
+  // Destroys the kept executables; nothing replays after.
+  void forget();
 
   // Ms elapsed since begin.
   static double ms_since(Clock::time_point begin) {
@@ -156,7 +170,7 @@ struct Pipeline::Impl {
 
 Pipeline::Impl::Impl(const Runtime::Impl &rt, std::vector<Tensor> state, uint32_t batch_size)
     : rt(rt), state(std::move(state)), trigger(knobs.trigger.value_or(10000)),
-      batch_size(batch_size) {
+      num_samples(knobs.num_samples.value_or(1)), batch_size(batch_size) {
   // A state tensor's device dims: B in front above a batch size of 1.
   shapes.reserve(this->state.size());
   for (const Tensor &tensor : this->state) {
@@ -199,6 +213,12 @@ void Pipeline::Impl::upload() {
   }
 }
 
+void Pipeline::Impl::forget() {
+  for (PJRT_LoadedExecutable *executable : executables)
+    rt.destroy(executable);
+  executables.clear();
+}
+
 Pipeline::Impl::~Impl() {
 #ifdef FSIM_VARIANT_OVERLAP
   {
@@ -214,6 +234,8 @@ Pipeline::Impl::~Impl() {
     if (module.executable)
       rt.destroy(module.executable);
 #endif
+  for (PJRT_LoadedExecutable *executable : executables)
+    rt.destroy(executable);
   for (PJRT_Buffer *buffer : buffers)
     rt.destroy(buffer);
 }
@@ -277,11 +299,14 @@ void Pipeline::Impl::execute_loop() {
       changed.notify_all();
       continue;
     }
+    // The pipeline keeps it when a replay can come.
     PJRT_LoadedExecutable *executable = module.executable;
     module.executable = nullptr;
+    if (keeps())
+      executables.push_back(executable);
     lock.unlock();
 
-    // Execute outside the lock; only this thread touches the buffers.
+    // Execute outside the lock; only this thread executes while modules are pending.
     Clock::time_point begin = Clock::now();
     std::exception_ptr failure;
     try {
@@ -289,8 +314,9 @@ void Pipeline::Impl::execute_loop() {
     } catch (...) {
       failure = std::current_exception();
     }
-    rt.destroy(executable);
     double ms = ms_since(begin);
+    if (!keeps())
+      rt.destroy(executable);
 
     lock.lock();
     stats.modules[next_execute].execute_ms = ms;
@@ -301,20 +327,24 @@ void Pipeline::Impl::execute_loop() {
   }
 }
 #else
-// Compiles and executes one module in place.
+// Compiles and executes one module in place, keeping its executable when a replay can come.
 void Pipeline::Impl::run(std::string text, ModuleStats &stats) {
   Clock::time_point begin = Clock::now();
   PJRT_LoadedExecutable *executable = compile(std::move(text));
   stats.compile_ms = ms_since(begin);
+  if (keeps())
+    executables.push_back(executable);
   begin = Clock::now();
   try {
     execute(executable);
   } catch (...) {
-    rt.destroy(executable);
+    if (!keeps())
+      rt.destroy(executable);
     throw;
   }
-  rt.destroy(executable);
   stats.execute_ms = ms_since(begin);
+  if (!keeps())
+    rt.destroy(executable);
 }
 #endif
 
@@ -550,6 +580,11 @@ void Pipeline::sync() {
   if (impl_->batch_size > 1 && !impl_->trace_length)
     throw std::runtime_error("fsim: a sync before end_trace at a batch size of " +
                              std::to_string(impl_->batch_size));
+  // Nothing replays after a mid-trace sync.
+  if (!impl_->trace_length) {
+    impl_->mid_trace = true;
+    impl_->forget();
+  }
   // Nothing executes: copy every state buffer to host, each sample to its own part.
   const Runtime::Impl &rt = impl_->rt;
   for (size_t i = 0; i < impl_->buffers.size(); ++i) {
@@ -564,6 +599,27 @@ void Pipeline::sync() {
   impl_->settled = true;
 }
 
+void Pipeline::replay() {
+  impl_->settled = false;
+  // The threads idle until the next submit, so the caller drives the device.
+  try {
+    impl_->upload();
+    for (size_t i = 0; i < impl_->executables.size(); ++i) {
+      Clock::time_point begin = Clock::now();
+      impl_->execute(impl_->executables[i]);
+      double ms = Impl::ms_since(begin);
+      std::lock_guard lock(impl_->mutex);
+      impl_->stats.modules[i].execute_ms += ms;
+    }
+  } catch (...) {
+    // A failure stays the pipeline's error.
+    std::lock_guard lock(impl_->mutex);
+    impl_->error = std::current_exception();
+    throw;
+  }
+  ++impl_->replays;
+}
+
 void Pipeline::exclude(double ms) {
   impl_->begin +=
       std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
@@ -572,8 +628,11 @@ void Pipeline::exclude(double ms) {
 void Pipeline::begin_trace() {
   // The threads idle after the last sync, so the caller drives the device.
   impl_->upload();
+  // Nothing replays once the next trace begins.
+  impl_->forget();
   impl_->settled = false;
   impl_->trace_length.reset();
+  ++impl_->retraces;
   {
     std::lock_guard lock(impl_->mutex);
     impl_->first = impl_->stats.modules.size();
@@ -622,7 +681,9 @@ void Pipeline::summary(std::ostream &out) const {
   out << "fsim stats: tracing=" << seconds(impl_->tracing_ms) << " overhead=" << seconds(overhead)
       << " simulation=" << seconds(simulation) << " tracing_overhead=" << seconds(tracing_overhead)
       << " compile_overhead=" << seconds(compile) << " wall=" << seconds(wall) << " trace=" << trace
-      << " modules=" << modules << "\n";
+      << " modules=" << modules
+      << " samples=" << impl_->batch_size * (1 + impl_->replays + impl_->retraces)
+      << " batch_size=" << impl_->batch_size << "\n";
   // A killed run keeps the line.
   out.flush();
 }

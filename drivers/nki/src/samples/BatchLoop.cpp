@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <iostream>
-#include <stdexcept>
 #include <utility>
 
 #include "Driver.h"
@@ -32,10 +31,14 @@ void BatchLoop::run() {
   runtimeOffset_ = fsim::Pipeline::num_samples() > 1 && driver_.hasRuntimeOffset();
   trace();
   store();
-  // Each later batch traces again when the trace has a run-time offset.
+  // Each later batch traces again with a run-time offset, else replays the first's executables.
   for (first_ = batchSize_; first_ < inputs_.size(); first_ += batchSize_) {
     if (runtimeOffset_) {
       trace();
+    } else {
+      pipeline_->exclude(timed([&] { load(); }));
+      pipeline_->replay();
+      pipeline_->sync();
     }
     store();
   }
@@ -55,12 +58,8 @@ fsim::Pipeline &BatchLoop::upload() {
     pipeline_->begin_trace();
     return *pipeline_;
   }
-  // B, or 1 with a run-time offset; N draws.
+  // B, or 1 with a run-time offset; N draws, more padding the last batch to B.
   batchSize_ = fsim::Pipeline::batch_size(runtime_, driver_.state());
-  // One batch holds every sample.
-  if (!runtimeOffset_ && batchSize_ < fsim::Pipeline::num_samples())
-    throw std::runtime_error("--num-samples " + std::to_string(fsim::Pipeline::num_samples()) +
-                             " passes one batch of " + std::to_string(batchSize_) + " samples");
   if (runtimeOffset_)
     batchSize_ = 1;
   inputs_.draw((size_t{fsim::Pipeline::num_samples()} + batchSize_ - 1) / batchSize_ * batchSize_);

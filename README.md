@@ -112,6 +112,8 @@ A sample is one simulation of the trace on one input set.
 - `--trigger N`: the soft trigger op count, 10000 by default, for the `trigger` and `overlap` variants only.
 - `--overlap T`: the compile threads, 4 by default, for the `overlap` variant only.
 - `--num-samples N`: the samples per run, 1 by default.
+  The count rounds up to whole batches, a batch being the samples run together at the library's batch size `B`, which `fsim/README.md` defines.
+  It is exactly `N` for a case with a run-time offset.
 - `--sampling S`: each sample's input set, by default `random`, a uniform draw with replacement from a fixed seed, or `modulo`, where sample `k`, counting from 0, takes input set `k mod M` of the case's `M` input sets.
 - `--bench PATH`: the cases, picked as gen picks them; it repeats, and without one, run takes every case.
 - `FSIM_WALL_TIMEOUT`: each case's wall seconds, 60 by default.
@@ -124,7 +126,7 @@ A sample is one simulation of the trace on one input set.
 - A simulation error marks its case `failing`, with the error in its log, and the run goes on.
 - The run exits nonzero unless every case is `match` or `xfail`.
 
-The status line also gives the case's worst relative error, `err`, and the fields of the last `fsim stats:` line in its log, times in seconds; [fsim/README.md](fsim/README.md) defines them:
+The status line also gives the case's worst relative error, `err`, and these fields of the last `fsim stats:` line in its log, times in seconds; [fsim/README.md](fsim/README.md) defines them:
 
 | Field              | Meaning                                                               |
 | ------------------ | --------------------------------------------------------------------- |
