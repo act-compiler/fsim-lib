@@ -16,5 +16,7 @@ std::unique_ptr<mlir::Pass> createByteGridsPass();
 std::unique_ptr<mlir::Pass> createForwardSlicesPass();
 // Removes updates that later updates overwrite.
 std::unique_ptr<mlir::Pass> createDeadUpdatesPass();
+// Orders reads of a buffer before its in-place update.
+std::unique_ptr<mlir::Pass> createOrderReadsPass();
 
 } // namespace fsim
