@@ -227,7 +227,7 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/isa/Instruction.h`               | `Instruction` and its `semantics(Accelerator&, Module&)`; `decoder(kind)` and the `decode<Kind>(Fields&)`               |
 | `src/isa/Instruction.cpp`             | the decode table from a kind to its decode; any other kind is refused as unknown                                        |
 | `src/isa/<Instruction>.cpp`           | one kind's `Instruction` subclass with `const` fields, and its decode, named after the public nki.isa instruction       |
-| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`                                                                    |
+| `src/isa/Shared.{h,cpp}`              | the lowering helpers several kinds share: `copyView`, `applyOperand`                                                    |
 | `src/accelerator/Accelerator.{h,cpp}` | `Accelerator`: the arenas' host copies, the allocation table, the reduce registers, the PSUM written mask               |
 | `src/accelerator/Limits.{h,cpp}`      | the memory-model checks: an allocation within its arena, `nc_matmul`'s arenas and its dst in one PSUM bank              |
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text      |
@@ -354,6 +354,9 @@ Semantics follow nki's numpy simulator, re-expressed as StableHLO, except where 
 - The docs put `dst` and `on_true_tile` in SBUF, and the driver refuses any other arena.
 - A write through a zero-stride view keeps, per element, the value last in flat order, as nki.simulate leaves it.
 - The suite reaches such a write in qkv_cte's `activation` into a scratch tile.
+- `tensor_scalar_arith` computes `data op0 operand0` in f32 and casts to `dst`'s dtype ([nki.isa.tensor_scalar](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.isa.tensor_scalar.html)).
+- Its view `operand0` is unit-padded to the rank of `data`, or of `dst` when `data` and `dst` have equal counts, and broadcast, as nki.simulate's `broadcast_operand` does; the docs give it as `[P, 1]`.
+- It ignores `engine`, as nki.simulate does.
 
 ## Coverage
 
@@ -369,25 +372,30 @@ Of these, `fsim-nki` decodes the ones in the table.
 | `tensor_reduce_arith` | norms, qkv_tkg, attention, moe all_expert               |
 | `nc_matmul`           | all but rope and cumsum                                 |
 | `tensor_copy`         | rope, cumsum, qkv_cte, output_proj, mlp, attention, moe |
+| `tensor_scalar_arith` | qkv_cte, attention, moe                                 |
 | `affine_select`       | qkv_cte, mlp, attention, moe                            |
 
 Any other kind fails at decode as unknown.
 Within a decoded kind, `fsim-nki` decodes these values, and any other fails at decode, or at lowering where a row says so:
 
-| field                                      | decodes                                                                         |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal |
-| `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum             |
-| `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power    |
-| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                       |
-| `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                                 |
-| `nc_matmul` `perf_mode`                    | none                                                                            |
-| `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                  |
-| `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16          |
-| `affine_select` `cmp_op`                   | equal, not_equal, greater, greater_equal, less, less_equal                      |
-| `affine_select` `channel_multiplier`       | any integer; the suite reaches 1, -1                                            |
-| `affine_select` `on_false_value`           | any number, as f32; the suite reaches -3.4028235e+38, 1.0                       |
-| `affine_select` `pred`                     | any pattern of `dst`'s elements per partition; another count fails at lowering  |
+| field                                      | decodes                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `activation` `op`                          | copy, exp, log, sqrt, rsqrt, tanh, sigmoid, silu, relu, square, abs, reciprocal      |
+| `activation` `reduce_op`                   | add; with `reset` or `load_reduce`, also multiply, maximum, minimum                  |
+| `tensor_tensor_arith` `op`                 | the arithmetic ops: add, subtract, multiply, divide, maximum, minimum, power         |
+| `tensor_tensor_arith` `op`, gpsimd integer | add, subtract, multiply, maximum, minimum                                            |
+| `tensor_reduce_arith` `op`                 | add, multiply, maximum, minimum                                                      |
+| `nc_matmul` `perf_mode`                    | none                                                                                 |
+| `tensor_copy` `engine`                     | any; the suite reaches vector, scalar, unknown                                       |
+| `tensor_copy` `src` to `dst` dtype         | any pair; the suite reaches equal, f32 to bf16, u32 to f32, i32 to u16               |
+| `tensor_scalar_arith` `op0`                | add, multiply, maximum                                                               |
+| `tensor_scalar_arith` `operand0`           | a view, unit-padded to `data`'s rank, `dst`'s at equal counts; or any number, as f32 |
+| `tensor_scalar_arith` `op1`, `operand1`    | none, with `reverse0` and `reverse1` false                                           |
+| `tensor_scalar_arith` `engine`             | any; the suite reaches vector, unknown                                               |
+| `affine_select` `cmp_op`                   | equal, not_equal, greater, greater_equal, less, less_equal                           |
+| `affine_select` `channel_multiplier`       | any integer; the suite reaches 1, -1                                                 |
+| `affine_select` `on_false_value`           | any number, as f32; the suite reaches -3.4028235e+38, 1.0                            |
+| `affine_select` `pred`                     | any pattern of `dst`'s elements per partition; another count fails at lowering       |
 
 ## Scope and limits
 
