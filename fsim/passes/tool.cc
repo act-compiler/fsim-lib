@@ -1,8 +1,9 @@
 // fsim-passes: the pass stage over one module file.
 // Prints the op counts and each phase's ms to stderr, each pass's with
 // --trace and the final op histogram with --histogram, and writes the
-// artifact, or the module's text with --text, to -o.
-//   fsim-passes <in.mlir> [-o <out>] [--text] [--trace] [--histogram]
+// artifact, or the module's text with --text, to -o; --batch-size B vmaps it at batch size B.
+//   fsim-passes <in.mlir> [-o <out>] [--text] [--trace] [--histogram] [--batch-size B]
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -18,7 +19,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 [[noreturn]] void usage() {
-  std::cerr << "usage: fsim-passes <in.mlir> [-o <out>] [--text] [--trace] [--histogram]\n";
+  std::cerr << "usage: fsim-passes <in.mlir> [-o <out>] [--text] [--trace] [--histogram] "
+               "[--batch-size B]\n";
   std::exit(1);
 }
 
@@ -30,6 +32,7 @@ int main(int argc, char **argv) {
   bool text = false;
   bool trace = false;
   bool histogram = false;
+  size_t batch_size = 1;
   for (int i = 1; i < argc; ++i) {
     std::string_view arg = argv[i];
     if (arg == "-o" && i + 1 < argc)
@@ -40,7 +43,13 @@ int main(int argc, char **argv) {
       trace = true;
     else if (arg == "--histogram")
       histogram = true;
-    else if (!in && !arg.starts_with("-"))
+    else if (arg == "--batch-size" && i + 1 < argc) {
+      // A batch size of at least 1.
+      std::string_view digits = argv[++i];
+      auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), batch_size);
+      if (error != std::errc() || end != digits.data() + digits.size() || batch_size == 0)
+        usage();
+    } else if (!in && !arg.starts_with("-"))
       in = argv[i];
     else
       usage();
@@ -75,6 +84,7 @@ int main(int argc, char **argv) {
   size_t before = stage.ops();
   phase("stock passes", [&] { return stage.stock(); });
   phase("library passes", [&] { return stage.library(); });
+  phase("vmap", [&] { return stage.vmap(batch_size); });
   size_t after = stage.ops();
   std::string result;
   if (text)

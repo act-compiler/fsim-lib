@@ -1,5 +1,5 @@
 // The pass stage over one module, one phase per call, in order:
-// parse, stock, library, then serialize or print.
+// parse, stock, library, vmap, then serialize or print.
 // A phase returns false on failure, with its diagnostics in error().
 #pragma once
 
@@ -27,6 +27,8 @@ public:
   bool stock();
   // Runs the library's passes, then aliases @main's arguments.
   bool library();
+  // Vmaps the module at batch_size; a no-op at 1.
+  bool vmap(size_t batch_size);
   // Writes the versioned StableHLO artifact.
   bool serialize(std::string &artifact);
   // Writes the module as text.

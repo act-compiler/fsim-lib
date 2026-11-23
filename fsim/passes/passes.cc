@@ -110,6 +110,14 @@ bool Stage::library() {
   return true;
 }
 
+bool Stage::vmap(size_t batch_size) {
+  if (batch_size == 1)
+    return true;
+  mlir::PassManager pm(&context_);
+  pm.addPass(createVmapPass(static_cast<int64_t>(batch_size)));
+  return run(pm) || fail("vmap");
+}
+
 bool Stage::serialize(std::string &artifact) {
   llvm::raw_string_ostream os(artifact);
   return mlir::succeeded(
