@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <sstream>
 #include <stdexcept>
 
 #include "accelerator/Limits.h"
@@ -22,9 +24,17 @@ std::vector<Type> types(const std::vector<fsim::Tensor> &state) {
   return out;
 }
 
+// Whether a view takes a run-time offset.
+bool offsets(const std::vector<View *> &views) {
+  return std::any_of(views.begin(), views.end(), [](const View *v) { return v->dyn.has_value(); });
+}
+
 } // namespace
 
 Driver::Driver(std::string trace) : path_(std::move(trace)) {
+  // Stdin is read once, for every reading.
+  if (path_ == "-")
+    stdin_.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
 }
 
 Driver::~Driver() = default;
@@ -33,10 +43,16 @@ void Driver::validate() {
   read(&Driver::check);
 }
 
+bool Driver::hasRuntimeOffset() {
+  read(&Driver::scan);
+  return runtimeOffset_;
+}
+
 void Driver::trace(std::function<void(const Alloc &)> add,
                    std::function<fsim::Pipeline &()> upload) {
   add_ = std::move(add);
   upload_ = std::move(upload);
+  pipeline_ = nullptr;
   read(&Driver::record, &Driver::begin);
 }
 
@@ -62,7 +78,7 @@ const std::vector<Output> &Driver::outputs() const {
 
 std::unique_ptr<std::istream> Driver::open() const {
   if (path_ == "-")
-    return std::make_unique<std::istream>(std::cin.rdbuf());
+    return std::make_unique<std::istringstream>(stdin_);
   auto in = std::make_unique<std::ifstream>(path_);
   if (!*in)
     throw std::runtime_error("cannot read " + path_);
@@ -73,6 +89,7 @@ void Driver::read(void (Driver::*each)(const std::string &), void (Driver::*star
   std::unique_ptr<std::istream> in = open();
   std::string line;
   size_t number = 0;
+  ended_ = false;
   try {
     while (std::getline(*in, line)) {
       ++number;
@@ -94,8 +111,12 @@ void Driver::read(void (Driver::*each)(const std::string &), void (Driver::*star
 }
 
 void Driver::begin() {
-  accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
+  if (!accelerator_)
+    accelerator_ = std::make_unique<Accelerator>(kernel_.header.hbm);
+  accelerator_->reset();
   module_ = std::make_unique<Module>(types(state()));
+  kernel_.outputs.clear();
+  instructionCounter_ = 0;
 }
 
 void Driver::record(const std::string &line) {
@@ -133,7 +154,7 @@ void Driver::execute(Fields &fields) {
 void Driver::resolve(Fields &fields) {
   std::vector<View *> views = fields.views();
   // A run-time offset reads state: flush, sync, read back.
-  if (std::any_of(views.begin(), views.end(), [](const View *v) { return v->dyn.has_value(); })) {
+  if (offsets(views)) {
     if (!pipeline_)
       upload();
     submit();
@@ -166,6 +187,14 @@ void Driver::check(const std::string &line) {
               << " bank_unchecked=" << bankUnchecked_ << "\n";
     ended_ = true;
   }
+}
+
+void Driver::scan(const std::string &line) {
+  Record r = parseRecord(line);
+  if (auto *f = std::get_if<Fields>(&r))
+    runtimeOffset_ = runtimeOffset_ || offsets(f->views());
+  else if (std::holds_alternative<End>(r))
+    ended_ = true;
 }
 
 void Driver::upload() {

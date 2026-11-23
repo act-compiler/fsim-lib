@@ -57,7 +57,7 @@ The variants flush and run as follows:
 | variant   | flush and run                                                  |
 | --------- | -------------------------------------------------------------- |
 | `eager`   | flushes at every op past the state's prologue                  |
-| `taidl`   | runs one module at the end of the run and throws on a second   |
+| `taidl`   | runs one module at each trace's end and throws on a second     |
 | `trigger` | flushes at the soft trigger                                    |
 | `overlap` | flushes at the soft trigger and compiles on background threads |
 
@@ -94,7 +94,12 @@ Each state tensor's host memory holds the batch's samples back to back, and abov
 - `Pipeline(runtime, state, batch_size)` takes the batch size.
 - The sample at batch index `m` starts from its part at byte `m x byte_size(tensor)`.
 - `sync` hands each of the batch's samples back to its own part.
-- Above a batch size of 1, a mid-trace `sync`, one before `end_trace`, throws.
+- Above a batch size of 1, a mid-trace `sync`, one before `end_trace`, throws, so a driver that needs one runs at a batch size of 1.
+
+`Pipeline::begin_trace()` begins the next trace on the same pipeline, for a driver that traces each sample again:
+
+- It uploads every state tensor anew from the host memory.
+- The trace's `tracing` clock starts there, and its modules add to the stats.
 
 `Pipeline::exclude(ms)` leaves `ms` of a driver's loads and stores out of the run's clock.
 
@@ -110,6 +115,7 @@ The pipeline clocks the run from its construction, or from the last `Pipeline::b
 - `Pipeline::end_trace(n)` ends the driver's trace of `n` instructions.
 - `Pipeline::summary(out)` prints the run's summary so far as one line, and flushes it.
 - A driver prints the summary at its trace's end, so a run killed in `sync` keeps it, and again after its last `sync`.
+  A driver that begins a next trace prints one line per trace, then a last one.
 
 ```text
 fsim stats: tracing=<s> overhead=<s> simulation=<s> tracing_overhead=<s> compile_overhead=<s> wall=<s> trace=<n> modules=<n>
@@ -119,7 +125,7 @@ Times are seconds to 3 decimals, and a value not yet known prints `-`:
 
 | value              | what it is                                                      | known after               |
 | ------------------ | --------------------------------------------------------------- | ------------------------- |
-| `tracing`          | the clock at `end_trace`                                        | `end_trace`               |
+| `tracing`          | the clock at `end_trace`, summed over the run's traces          | `end_trace`               |
 | `overhead`         | `wall` minus `simulation`                                       | a clean `sync` of modules |
 | `simulation`       | the modules' execute time                                       | a clean `sync` of modules |
 | `tracing_overhead` | `overhead` minus `compile_overhead`                             | a clean `sync` of modules |
@@ -128,7 +134,7 @@ Times are seconds to 3 decimals, and a value not yet known prints `-`:
 | `trace`            | `end_trace`'s instruction count                                 | `end_trace`               |
 | `modules`          | the submitted module count                                      | a clean `sync` of modules |
 
-- A clean `sync` of modules returned, with at least one module submitted and none since.
+- A clean `sync` of modules returned, with at least one module submitted and no submit or `end_trace` since.
 - Outside `overlap`, `submit` compiles and runs its module, so a submit inside the trace counts in `tracing`.
 
 The pass stage is `fsim_passes`, a shared object with only `passes.h`'s C entry visible, so its static MLIR never meets a driver's LLVM.
