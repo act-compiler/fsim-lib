@@ -18,12 +18,12 @@ class Driver;
 
 class BatchLoop {
 public:
-  // Creates the runtime; the driver outlives the loop.
-  BatchLoop(Driver &driver, std::string inputs, std::string outputs);
+  // Creates the runtime; the driver outlives the loop. sampling is Inputs'.
+  BatchLoop(Driver &driver, std::string inputs, std::string outputs, const std::string &sampling);
   BatchLoop(const BatchLoop &) = delete;
   BatchLoop &operator=(const BatchLoop &) = delete;
 
-  // Simulates every sample, then prints the summary line; called once.
+  // Simulates every sample, prints the summary line, then writes draws.bin; called once.
   void run();
 
 private:

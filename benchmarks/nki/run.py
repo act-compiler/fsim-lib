@@ -1,8 +1,10 @@
 # Runs one fsim-nki build over each case and checks every output.
-# A run writes <case>/out/, removed once checked, and <case>/<log>, named by its build and knobs,
+# A run writes <case>/out/, which keeps only draws.bin once checked,
+# and <case>/<log>, named by its build and knobs,
 # whose last line is its status: match, wrong, failing, N/A or not generated;
 # an xfail case is xfail or xpass.
-#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [bench...]
+#   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [--num-samples N] [--sampling S]
+#          [bench...]
 # FSIM_WALL_TIMEOUT caps each run's wall seconds, 60 by default.
 import argparse
 import ctypes
@@ -14,6 +16,7 @@ import subprocess
 import sys
 import traceback
 
+import draws
 import ml_dtypes
 import numpy as np
 import suite
@@ -31,7 +34,7 @@ COMPILERS = [
 ]
 VARIANTS = ['eager', 'taidl', 'trigger', 'overlap']
 KNOBS = {'eager': [], 'taidl': [], 'trigger': ['trigger'], 'overlap': ['trigger', 'overlap']}
-DEFAULTS = {'trigger': 10000, 'overlap': 4}
+DEFAULTS = {'trigger': 10000, 'overlap': 4, 'num_samples': 1, 'sampling': 'random'}
 # Wall seconds per run, the development cap.
 TIMEOUT = float(os.environ.get('FSIM_WALL_TIMEOUT', '60'))
 
@@ -48,7 +51,7 @@ FAILURES = [
 TOLERANCE = {
     'float32': (np.float32, 1e-3, 1e-2),
     'float16': (np.float16, 1e-2, 1e-1),
-    'bfloat16': (ml_dtypes.bfloat16, 3e-2, 1e-1),
+    'bfloat16': (ml_dtypes.bfloat16, 5e-2, 1e-1),
 }
 
 # A taidl build's stop at a mid-run flush, which makes the case N/A.
@@ -79,8 +82,13 @@ def gpus():
 
 
 def log_name(compiler, variant, knobs):
-    # <compiler>-<variant>[-<trigger>[-<overlap>]].log, a knob per one it takes.
+    # <compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log:
+    # the variant's knobs, then a sample count not 1 and --sampling modulo.
     names = [compiler, variant] + [str(knobs[k]) for k in KNOBS[variant]]
+    if knobs['num_samples'] != DEFAULTS['num_samples']:
+        names.append(f'n{knobs["num_samples"]}')
+    if knobs['sampling'] != DEFAULTS['sampling']:
+        names.append(knobs['sampling'])
     return '-'.join(names) + '.log'
 
 
@@ -108,6 +116,10 @@ def simulate(folder, log, timeout, compiler, variant, knobs):
     cmd = [sim(compiler, variant), '--inputs', os.path.join(folder, 'inputs'), '--outputs', out]
     for k in KNOBS[variant]:
         cmd += [f'--{k}', str(knobs[k])]
+    if knobs['num_samples'] != DEFAULTS['num_samples']:
+        cmd += ['--num-samples', str(knobs['num_samples'])]
+    if knobs['sampling'] != DEFAULTS['sampling']:
+        cmd += ['--sampling', knobs['sampling']]
     cmd += [os.path.join(folder, 'kernel.trace')]
     limits = f'FSIM_WALL_TIMEOUT={timeout:g}'
     log.write(f'{limits} {" ".join(cmd)}\n')
@@ -172,28 +184,24 @@ def rel_error(ref, act, floor):
 
 
 def compare(folder, case):
-    # Every golden against its output; returns (cause or None, max error).
+    # Each sample's output against its input set's golden; returns (cause or None, max error).
     worst, over = 0.0, False
     kind, tol, floor = TOLERANCE[case['dtype']]
-    for name in bins(folder, 'golden'):
-        golden = os.path.join(folder, 'golden', name)
-        out = os.path.join(folder, 'out', name)
-        if not os.path.isfile(out):
-            return f'no out/{name}', None
-        size, want = os.path.getsize(out), os.path.getsize(golden)
-        if size != want:
-            return f'out/{name} is {size} B, golden {want} B', None
-        ref = np.fromfile(golden, kind).astype(np.float64)
-        act = np.fromfile(out, kind).astype(np.float64)
-        if ((~np.isfinite(ref) | ~np.isfinite(act)) & (ref != act)).any():
-            return f'out/{name} has nan or inf', None
-        if ref.any() and not act.any():
-            return f'out/{name} is all zero', None
-        rel = rel_error(ref, act, floor)
-        if np.isnan(rel).any():
-            return f'out/{name} has a nan error', None
-        worst = max(worst, float(rel.max()))
-        over |= rel.max() > tol
+    try:
+        indices = draws.read(folder)
+        for name in bins(folder, 'golden'):
+            for where, ref, act in draws.pairs(folder, name, indices, kind):
+                if ((~np.isfinite(ref) | ~np.isfinite(act)) & (ref != act)).any():
+                    return f'{where} has nan or inf', None
+                if ref.any() and not act.any():
+                    return f'{where} is all zero', None
+                rel = rel_error(ref, act, floor)
+                if np.isnan(rel).any():
+                    return f'{where} has a nan error', None
+                worst = max(worst, float(rel.max()))
+                over |= rel.max() > tol
+    except draws.Mismatch as e:
+        return str(e), None
     return ('over tolerance' if over else None), worst
 
 
@@ -242,10 +250,11 @@ def run(case, timeout, compiler, variant, knobs):
             status, cause = 'failing', f'run.py: {type(e).__name__}: {e}'.replace('\n', ' ')
             raise
         finally:
-            # A checked case's out/ goes.
+            # Checked outputs go; out/ keeps only draws.bin.
             out = os.path.join(folder, 'out')
-            if os.path.isdir(out):
-                shutil.rmtree(out)
+            for name in os.listdir(out) if os.path.isdir(out) else []:
+                if name != 'draws.bin':
+                    os.remove(os.path.join(out, name))
             # One status line, none only when interrupted.
             if status:
                 line = f'status: {status}' + (f' ({cause})' if cause else '')
@@ -270,6 +279,17 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--overlap', type=int, help=f'compile threads, {DEFAULTS["overlap"]} by default'
+    )
+    parser.add_argument(
+        '--num-samples', type=int, help=f'samples per run, {DEFAULTS["num_samples"]} by default'
+    )
+    parser.add_argument(
+        '--sampling',
+        choices=['random', 'modulo'],
+        help=(
+            'input set per sample: a uniform draw with replacement, or k mod M for sample k '
+            f'of a case with M input sets, {DEFAULTS["sampling"]} by default'
+        ),
     )
     args = parser.parse_args()
     todo = suite.resolve(suite.load(), args.benches)

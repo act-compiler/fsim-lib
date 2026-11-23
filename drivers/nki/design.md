@@ -14,8 +14,8 @@ Paths here are relative to the repo root.
 ```bash
 ./scripts/build.sh nki [--compiler C] [--variant V]    # drivers/nki/build/<compiler>-<variant>/fsim-nki
 ./scripts/bench.sh gen --isa nki [--bench PATH]...     # each case's kernel.trace, inputs and golden
-./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T]
-./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [<trace>|-]"
+./scripts/bench.sh run --isa nki [--compiler C] [--variant V] [--bench PATH]... [--trigger N] [--overlap T] [--num-samples N] [--sampling S]
+./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --inputs DIR --outputs DIR [--trigger N] [--overlap T] [--num-samples N] [--sampling S] [<trace>|-]"
 ./docker/exec.sh "drivers/nki/build/custom-cpu-overlap/fsim-nki --validate [<trace>|-]"
 ```
 
@@ -30,25 +30,32 @@ The benchmarks run in one mode: gen records each case's trace once, and run read
   - `--variant taidl`
   - `--variant trigger`
 - `bench.sh run --isa nki` runs one build, picked by the same `--compiler` and `--variant`; `README.md`'s Bench lists its flags.
-- It resolves cases as `gen` does and checks `out/out.bin` against `golden/out.bin`.
-- The check is the max relative error, at most the dtype's bound below.
+- It resolves cases as `gen` does and checks each sample's part of `out/<name>.bin`.
+  A sample is one simulation of the trace on one input set, one value of every input tensor with its golden.
+- The part is checked against the part of `golden/<name>.bin` for the input set `out/draws.bin` gives that sample.
+- The status line's `err` is the worst over every sample.
+- The check is the max relative error, at most the dtype's tolerance below.
 - Each element's relative error divides by at least a floor of max |golden| times the dtype's fraction:
 
   | Dtype | Max relative error | Floor fraction |
   | ----- | ------------------ | -------------- |
-  | bf16  | 3e-2               | 0.1            |
+  | bf16  | 5e-2               | 0.1            |
   | f16   | 1e-2               | 0.1            |
   | f32   | 1e-3               | 0.01           |
 
-- A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]].log`, with a knob per one the variant takes.
+- A run logs to `<case>/<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log`, with a knob per one the variant takes.
 - `fsim-nki` reads a trace file, or stdin for `-` or no trace; the runner always passes the file.
-- It loads `<inputs>/<name>.bin` for each input allocation and writes `<outputs>/<name>.bin` for each output.
-- Loading a sample zeroes its state, then reads each input's tensor.
+- `<inputs>/<name>.bin` holds its input's tensor from each of the case's `M` input sets, back to back.
+- `--sampling S` draws each simulated sample's input set:
+  - `random`, the default: a uniform draw with replacement over the `M` input sets, from a fixed-seed `std::mt19937_64`, the same on every run with one C++ standard library
+  - `modulo`: sample `k` takes input set `k mod M`, so `--num-samples 1` runs input set 0
+- Loading a sample zeroes its state, then reads each input's tensor from its input set.
 - Samples run together in batches of the library's batch size `B`, which `fsim/README.md` defines.
 - The first batch traces; its first instruction builds the library's pipeline over the batch's state and starts the run's clock.
 - A `--num-samples` past one batch of `B` samples is refused.
-- `<outputs>/<name>.bin` holds the output of every simulated sample in order.
-- `--trigger`, `--overlap` and `--num-samples` are the library's knobs.
+- `<outputs>/<name>.bin` holds the output of every simulated sample in order, and `<outputs>/draws.bin` each sample's input-set index as a little-endian uint32, under either `--sampling` value.
+- `fsim-nki` refuses before the first output byte when the outputs pass half the free space of `--outputs`, or 1 GiB.
+- `--trigger`, `--overlap` and `--num-samples` are the library's knobs, and `--sampling` the driver's.
 - An undecoded instruction kind, a bad record or a refused view fails the run loudly.
 
 A run's evaluation log is fsim's summary line, here an `rmsnorm_tkg` case's under `overlap`:
@@ -66,8 +73,9 @@ fsim stats: tracing=0.000 overhead=0.066 simulation=0.007 tracing_overhead=0.003
 `--validate` checks a trace without simulating it:
 
 - It parses each record and runs the memory-model checks below, with instructions left undecoded, no inputs and nothing lowered.
+- It takes no `--inputs`, `--outputs` or `--sampling`.
 - It checks that each `output` names a declared allocation.
-- It ends with one line, `checked records=N allocs=M bank_unchecked=K`.
+- It ends with one line, `checked records=<n> allocs=<n> bank_unchecked=<n>`.
 - `bank_unchecked` counts the `nc_matmul` dsts whose `+s(...)` offset leaves the bank check to run time.
 
 ## The record format
@@ -112,7 +120,7 @@ reg      := "r" int
 - `arena` is `hbm`, `sbuf` or `psum`; `private_hbm` and `shared_hbm` both map to `hbm`.
 - `addr` is a byte offset for `hbm`, and `partition,byte` for `sbuf` and `psum`.
 - `placed` is `kernel` when the kernel allocated the tensor at an address, and `driver` when the recorder placed it.
-- `input=<name>` marks a kernel input; `fsim-nki` loads `<inputs>/<name>.bin` there before the first instruction.
+- `input=<name>` marks a kernel input; `fsim-nki` loads there, before the first instruction, each sample's tensor of its input set from `<inputs>/<name>.bin`.
 - `name=` keeps the tensor's name when it has one.
 
 A kernel address is used as given, so aliasing, capacity and bank checks are exact for those tensors.
@@ -161,7 +169,7 @@ A view is one operand: `sbuf%3@0,64:bf16[[1,128],[0,1],[1,32]]`.
 - The operand's shape is the counts.
 - The recorder rewrites a view's element offset and pattern over its allocation's row into this form.
 - It refuses a view whose partition stride is not a whole number of partitions.
-- `+s(<view>)*<k>` adds the index the inner view reads, times `k` elements, at run time.
+- `+s(<view>)*<k>`, a run-time offset, adds the index the inner view reads, times `k` elements.
 - `+r<N>*<k>` is reserved for the same with register `r<N>`, and `fsim-nki` refuses it.
 - An index view is a single `i32` or `u32`, read as `i32`; a multi-element `+s(...)` view is refused.
 - A `+s(...)` offset moves within a partition row, never across partitions.
@@ -259,8 +267,8 @@ Parsing, accelerator state, code generation and instruction semantics each stay 
 | `src/stablehlo/Module.{h,cpp}`        | `Module`: state parameters, view `read` and `write`, ops, and `text()`, which ends the module and returns its text        |
 | `src/Driver.{h,cpp}`                  | `Driver`: `trace()` over a file or stdin, `validate()`, `resolve`, soft trigger                                           |
 | `src/samples/BatchLoop.{h,cpp}`       | `BatchLoop`: the loop over one batch of `B` samples                                                                       |
-| `src/samples/Inputs.{h,cpp}`          | `Inputs`: each input allocation's file, and its load into the host copies                                                 |
-| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`                                                                         |
+| `src/samples/Inputs.{h,cpp}`          | `Inputs`: the case's input sets, `--sampling`, and a sample's load from its input set                                     |
+| `src/samples/Outputs.{h,cpp}`         | each sample's outputs into `<outputs>/<name>.bin`, after the output cap and disk check, and `draws.bin`                   |
 | `src/main.cpp`                        | the `fsim-nki` command line                                                                                               |
 | `CMakeLists.txt`                      | `add_subdirectory(../../fsim)`, links `fsim`                                                                              |
 

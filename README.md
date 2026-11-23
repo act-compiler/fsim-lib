@@ -24,6 +24,7 @@ Under review at a major systems conference.
   - the vmap pass over each module in `fsim/passes/test/` at `--batch-size 2`
   - the build of the NKI driver
   - the gen and the run of the nki cases the workflow lists
+  - the same run at `--num-samples 4`, except the case with a `+s()` run-time offset, which `drivers/nki/design.md` defines
 
 ## Running it
 
@@ -88,6 +89,9 @@ Each `matmul` case is `tensor_c = tensor_a @ tensor_b` in fp16 at one `MxKxN`, i
 - It records the kernel through `drivers/nki/record` into `kernel.trace`, the file `fsim-nki` reads.
 - It writes the seeded inputs to `inputs/<tensor>.bin` and the reference output to `golden/<tensor>.bin`.
 - A `nkilib` case's reference is nkilib's torch reference, and a `matmul` case's is an fp32 matmul cast to fp16.
+- A `nkilib` case's `.bin` files hold its seeded input sets: an input set is one value of every input tensor, with its golden.
+  Each file holds its tensor from each of the case's input sets, back to back.
+  gen compiles and records input set 0 alone.
 - Each `xfail` case breaks one trn2 memory limit at an explicit address, and gen writes only its `kernel.trace` and inputs.
   Its gen line logs the compiler's rejection and whether `nki.simulate` runs it, and a compile that succeeds fails the case.
 - git ignores the generated files.
@@ -100,17 +104,20 @@ Each `matmul` case is `tensor_c = tensor_a @ tensor_b` in fp16 at one `MxKxN`, i
 ```
 
 `./scripts/bench.sh run --isa nki` runs the generated cases on one build of the NKI driver.
-It hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the output against the golden.
+It hands each case's `kernel.trace` to that build's `fsim-nki`, and checks each sample's output against its input set's golden.
+A sample is one simulation of the trace on one input set.
 
 - `--compiler C`: the build's library compiler, `custom-cpu` by default; `fsim/README.md` lists the compilers.
 - `--variant V`: the build's library variant, `overlap` by default.
 - `--trigger N`: the soft trigger op count, 10000 by default, for the `trigger` and `overlap` variants only.
 - `--overlap T`: the compile threads, 4 by default, for the `overlap` variant only.
+- `--num-samples N`: the samples per run, 1 by default.
+- `--sampling S`: each sample's input set, by default `random`, a uniform draw with replacement from a fixed seed, or `modulo`, where sample `k`, counting from 0, takes input set `k mod M` of the case's `M` input sets.
 - `--bench PATH`: the cases, picked as gen picks them; it repeats, and without one, run takes every case.
 - `FSIM_WALL_TIMEOUT`: each case's wall seconds, 60 by default.
 - The build is `drivers/nki/build/<compiler>-<variant>/fsim-nki`, which `./scripts/build.sh nki` builds.
-- A case's output goes to `out/<tensor>.bin` in the case's folder, beside `golden/`; after the check, `out/` is removed.
-- A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in its folder, with a knob per one the variant takes.
+- A case's outputs go to `out/<tensor>.bin` in the case's folder, and `out/draws.bin` holds each sample's input-set index; after the check, `out/` keeps only `draws.bin`.
+- A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]][-n<num-samples>][-modulo].log` in its folder, with a knob per one the variant takes, the sample count unless 1, and `modulo` under `--sampling modulo`.
 - The log's last line, also printed per case, is its status: `match`, `wrong`, `failing`, `N/A` or `not generated`.
 - `N/A` marks a `taidl` build that stops at a second module.
 - An `xfail` case is `xfail` when `fsim-nki` rejects it with the case's expected message, `xpass` when it accepts it, and `failing` otherwise.

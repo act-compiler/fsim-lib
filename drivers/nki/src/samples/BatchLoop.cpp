@@ -22,14 +22,16 @@ template <typename Call> double timed(Call call) {
 
 } // namespace
 
-BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs)
-    : driver_(driver), outputs_(std::move(outputs)), inputs_(std::move(inputs)) {
+BatchLoop::BatchLoop(Driver &driver, std::string inputs, std::string outputs,
+                     const std::string &sampling)
+    : driver_(driver), outputs_(std::move(outputs)), inputs_(std::move(inputs), sampling) {
 }
 
 void BatchLoop::run() {
   trace();
   store();
   pipeline_->summary(std::cout);
+  storeDraws(inputs_.draws(), outputs_);
 }
 
 void BatchLoop::add(const Alloc &alloc) {
@@ -66,6 +68,9 @@ void BatchLoop::load() {
 void BatchLoop::store() {
   const Accelerator &accelerator = driver_.accelerator();
   pipeline_->exclude(timed([&] {
+    // Before the first byte, every sample's outputs must fit.
+    if (first_ == 0)
+      checkOutputs(accelerator, driver_.outputs(), inputs_.size(), outputs_);
     for (uint32_t m = 0; m < batchSize_; ++m)
       storeOutputs(accelerator, driver_.outputs(), m, first_ + m, outputs_);
   }));

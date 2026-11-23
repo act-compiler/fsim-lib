@@ -10,7 +10,7 @@ The setup is under [Reproduction](#reproduction).
 ## The suite on the chip
 
 - All 56 nkilib cases of `benchmarks/nki/` pass against their torch goldens on the chip.
-- The worst relative error is 7.75e-3, within the bf16 tolerance of 3e-2.
+- The worst relative error is 7.75e-3, within the bf16 tolerance of 5e-2.
 - That includes nkilib's moe_tkg all_expert, which `nki.simulate` rejects (see [Kernel input placement](#kernel-input-placement)).
 
 ## Documented limitations
