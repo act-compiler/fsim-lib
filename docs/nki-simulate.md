@@ -67,7 +67,7 @@ The checks have these limits:
 - Tensors without an explicit address are checked at the driver's own placement, since the recorder sees no address for these tensors.
 - nkilib's allocator passes an address unless it runs in its auto-allocation mode ([nki-library at 92d11f6, allocator.py](https://github.com/aws-neuron/nki-library/blob/92d11f6/src/nkilib_src/nkilib/core/utils/allocator.py#L412-L421)).
 - SBUF is modelled at the documented 224 KiB per partition.
-- nki's compile path rejects some SBUF ranges below 224 KiB; the docs give no usable size.
+- nki's compile path rejects some SBUF ranges below 224 KiB, and nki's `nl.tile_size.sbuf_fmax_bytes` gives 212984 usable bytes per partition.
 - No claim is made about overlapping or aliased tensors.
 
 ## Kernel input placement
