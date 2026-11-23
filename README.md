@@ -105,7 +105,7 @@ It hands each case's `kernel.trace` to that build's `fsim-nki`, and checks the o
 - `--bench PATH`: the cases, picked as gen picks them; it repeats, and without one, run takes every case.
 - `FSIM_WALL_TIMEOUT`: each case's wall seconds, 60 by default.
 - The build is `drivers/nki/build/<compiler>-<variant>/fsim-nki`, which `./scripts/build.sh nki` builds.
-- A case's output goes to `out/<tensor>.bin` in the case's folder, beside `golden/`.
+- A case's output goes to `out/<tensor>.bin` in the case's folder, beside `golden/`; after the check, `out/` is removed.
 - A case logs to `<compiler>-<variant>[-<trigger>[-<overlap>]].log` in its folder, with a knob per one the variant takes.
 - The log's last line, also printed per case, is its status: `match`, `wrong`, `failing`, `N/A` or `not generated`.
 - `N/A` marks a `taidl` build that stops at a second module.

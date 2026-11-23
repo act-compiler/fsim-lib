@@ -1,5 +1,5 @@
 # Runs one fsim-nki build over each case and checks every output.
-# A run writes <case>/out/ and <case>/<log>, named by its build and knobs,
+# A run writes <case>/out/, removed once checked, and <case>/<log>, named by its build and knobs,
 # whose last line is its status: match, wrong, failing, N/A or not generated;
 # an xfail case is xfail or xpass.
 #   run.py [--compiler C] [--variant V] [--trigger N] [--overlap T] [bench...]
@@ -242,6 +242,10 @@ def run(case, timeout, compiler, variant, knobs):
             status, cause = 'failing', f'run.py: {type(e).__name__}: {e}'.replace('\n', ' ')
             raise
         finally:
+            # A checked case's out/ goes.
+            out = os.path.join(folder, 'out')
+            if os.path.isdir(out):
+                shutil.rmtree(out)
             # One status line, none only when interrupted.
             if status:
                 line = f'status: {status}' + (f' ({cause})' if cause else '')
