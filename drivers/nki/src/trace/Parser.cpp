@@ -380,6 +380,13 @@ Number Fields::number(const std::string &name) {
   return std::get<Number>(v);
 }
 
+Affine Fields::affine(const std::string &name) {
+  Value v = take(name);
+  if (!std::holds_alternative<Affine>(v))
+    fail(name, "is not an affine map");
+  return std::get<Affine>(std::move(v));
+}
+
 bool Fields::flag(const std::string &name) {
   Value v = take(name);
   if (!std::holds_alternative<bool>(v))
